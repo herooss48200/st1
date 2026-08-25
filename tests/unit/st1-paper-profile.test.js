@@ -18,4 +18,8 @@ describe('ST1 R41.1 PAPER final profile', () => {
     expect(loop.isUnlimitedPaperPositions()).toBe(true);
     expect(loop.resolveMaxPositions()).toBe(Number.POSITIVE_INFINITY);
   });
+
+  test('keeps BTC15 SuperTrend out of the ST1 final entry authority', () => {
+    expect(config.STRICT_FINAL_SUPERTREND_GATE).toBe(false);
+  });
 });

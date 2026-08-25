@@ -515,6 +515,31 @@ describe('Live Price Position Management', () => {
     expect(loop.isDelayedProtectionMode()).toBe(false);
   });
 
+  test('never invokes BTC15 SuperTrend as an ST1 entry gate even if a legacy env/config flag is true', async () => {
+    const { loop, orderService } = createLoop({ live: false });
+    loop.ensureProtectionOrders.mockRestore();
+    config.POSITION_FOLLOW_MODE = 'STAGED_R_ATR';
+    const previousGate = config.STRICT_FINAL_SUPERTREND_GATE;
+    config.STRICT_FINAL_SUPERTREND_GATE = true;
+    jest.spyOn(loop, 'validateEntryTrend').mockResolvedValue({ allowed: true, btcTrend: 'UP', ethTrend: 'UP' });
+    const btc15GateSpy = jest.spyOn(loop, 'evaluateFinalDirectionalEntryGate');
+    orderService.placeOrder.mockResolvedValue({
+      success: true,
+      orderId: 'NO_BTC15_GATE_ENTRY',
+      order: { avgPrice: 100, quantity: 1 }
+    });
+
+    const result = await loop.enterPosition('NOBTC15GATEUSDT', 100, 'BUY', [], null, {
+      verdict: 'WOULD_CONFIRM',
+      breadth15m: { state: 'UP' }
+    });
+
+    config.STRICT_FINAL_SUPERTREND_GATE = previousGate;
+    expect(result).not.toBeNull();
+    expect(btc15GateSpy).not.toHaveBeenCalled();
+    expect(orderService.placeOrder).toHaveBeenCalledTimes(1);
+  });
+
   test('opens a paper position with the 1.5% hard initial stop cap and assigns one random activation timestamp', async () => {
     const { loop, orderService } = createLoop({ live: false });
     loop.ensureProtectionOrders.mockRestore();

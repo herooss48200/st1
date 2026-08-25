@@ -417,8 +417,8 @@ ${breadthText}
 🕐 Saat: ${new Date().toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}
 
 <b>GİRİŞ HUNİSİ — SON 15 DK</b>
-🟢 LONG: Pusu <code>${pusu.LONG || 0}</code> → Setup <code>${long.setup || 0}</code> → BodyBreak <code>${long.bodyBreak || 0}</code> → Coin EMA/ST <code>${long.coinDirection || 0}</code> → BTC/ETH <code>${long.trendGuard || 0}</code> → Breadth <code>${long.breadth || 0}</code> → Risk <code>${long.risk || 0}</code> → BTC15 Final <code>${long.btc15Final || 0}</code> → Açılan <code>${long.opened || 0}</code>
-🔴 SHORT: Pusu <code>${pusu.SHORT || 0}</code> → Setup <code>${short.setup || 0}</code> → BodyBreak <code>${short.bodyBreak || 0}</code> → Coin EMA/ST <code>${short.coinDirection || 0}</code> → BTC/ETH <code>${short.trendGuard || 0}</code> → Breadth <code>${short.breadth || 0}</code> → Risk <code>${short.risk || 0}</code> → BTC15 Final <code>${short.btc15Final || 0}</code> → Açılan <code>${short.opened || 0}</code>
+🟢 LONG: Pusu <code>${pusu.LONG || 0}</code> → Setup <code>${long.setup || 0}</code> → BodyBreak <code>${long.bodyBreak || 0}</code> → Coin EMA/ST <code>${long.coinDirection || 0}</code> → BTC/ETH <code>${long.trendGuard || 0}</code> → Breadth <code>${long.breadth || 0}</code> → Risk <code>${long.risk || 0}</code> → Açılan <code>${long.opened || 0}</code>
+🔴 SHORT: Pusu <code>${pusu.SHORT || 0}</code> → Setup <code>${short.setup || 0}</code> → BodyBreak <code>${short.bodyBreak || 0}</code> → Coin EMA/ST <code>${short.coinDirection || 0}</code> → BTC/ETH <code>${short.trendGuard || 0}</code> → Breadth <code>${short.breadth || 0}</code> → Risk <code>${short.risk || 0}</code> → Açılan <code>${short.opened || 0}</code>
 
 🚫 <b>Son Yakın Reddedilenler</b>
 ${rejectLines}

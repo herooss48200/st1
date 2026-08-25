@@ -185,7 +185,7 @@ export class TradingLoop {
   createEntryFunnelWindow() {
     const makeSide = () => ({
       setup: new Set(), bodyBreak: new Set(), coinDirection: new Set(), trendGuard: new Set(),
-      breadth: new Set(), risk: new Set(), btc15Final: new Set(), opened: new Set()
+      breadth: new Set(), risk: new Set(), opened: new Set()
     });
     return { startedAt: Date.now(), LONG: makeSide(), SHORT: makeSide(), rejections: new Map() };
   }
@@ -215,7 +215,7 @@ export class TradingLoop {
     for (const side of ['LONG', 'SHORT']) {
       counts[side] = {};
       const src = this.entryFunnelWindow?.[side] || {};
-      for (const stage of ['setup', 'bodyBreak', 'coinDirection', 'trendGuard', 'breadth', 'risk', 'btc15Final', 'opened']) {
+      for (const stage of ['setup', 'bodyBreak', 'coinDirection', 'trendGuard', 'breadth', 'risk', 'opened']) {
         counts[side][stage] = src[stage] instanceof Set ? src[stage].size : 0;
       }
     }
@@ -2540,20 +2540,10 @@ export class TradingLoop {
       }
       this.markEntryFunnelStage(signal, 'risk', coin);
 
-      // ABSOLUTE LAST ENTRY AUTHORITY: nothing may override BTC 15m SuperTrend.
-      // LONG requires UP, SHORT requires DOWN, missing/contrary data fails closed.
-      const finalDirectionalGate = await this.evaluateFinalDirectionalEntryGate(coin, signal, marketBreadth);
-      if (!finalDirectionalGate.allowed) {
-        this.markEntryFunnelRejection(signal, coin, finalDirectionalGate.reason || 'BTC15_FINAL_GATE');
-        logger.warn('Position entry rejected by strict final BTC15 SuperTrend gate', {
-          coin,
-          signal,
-          ...finalDirectionalGate
-        });
-        return null;
-      }
-      this.markEntryFunnelStage(signal, 'btc15Final', coin);
-      logger.info('Strict final BTC15 SuperTrend gate passed', { coin, signal, ...finalDirectionalGate });
+      // ST1 is a reversal/transition strategy. BTC 15m SuperTrend is telemetry only:
+      // it remains visible in the rescue radar but is never an entry authority.
+      // Final directional authority stays with the fresh BTC/ETH EMA regime guard plus
+      // the coin EMA50/EMA200 + coin SuperTrend direction gate above.
 
       const orderResult = await this.orderService.placeOrder({
         symbol: coin,

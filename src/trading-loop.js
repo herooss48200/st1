@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { classifyEconomicOutcome, selectFilledProtectiveOrder } from './utils/close-truth.js';
+import St1RescueRadar from './services/st1-rescue-radar.js';
 
 const STRATEGY_CANDLE_INTERVAL_MS = config.STRATEGY_CANDLE_INTERVAL_MS;
 const BTC_SYMBOL = config.BTC_SYMBOL;
@@ -80,6 +81,36 @@ export class TradingLoop {
     this.trigger = engines.trigger;
     this.riskManager = engines.riskManager;
 
+    this.st1RescueRadar = new St1RescueRadar({
+      enabled: config.ST1_RESCUE_RADAR_ENABLED,
+      protectLongs: true,
+      protectShorts: true,
+      supertrendPeriod: config.FINAL_SUPERTREND_PERIOD,
+      supertrendMultiplier: config.FINAL_SUPERTREND_MULTIPLIER,
+      emaFastPeriod: config.BTC_TREND_EMA_FAST_PERIOD,
+      emaSlowPeriod: config.BTC_TREND_EMA_SLOW_PERIOD,
+      bollingerPeriod: config.BOLLINGER_PERIOD,
+      bollingerStdDev: config.BOLLINGER_STD_DEV,
+      st1BbTolerancePercent: config.ST1_RESCUE_RADAR_ST1_BB_TOLERANCE_PERCENT,
+      st1RecentMinutes: config.ST1_RESCUE_RADAR_ST1_RECENT_MINUTES,
+      yellowBtc5BbPercentB: config.ST1_RESCUE_RADAR_YELLOW_BTC5_BB_PERCENT_B,
+      yellowBtc15Ema50DistancePercent: config.ST1_RESCUE_RADAR_YELLOW_BTC15_EMA50_DISTANCE_PERCENT,
+      orangeFastDrop5mPercent: -Math.abs(config.ST1_RESCUE_RADAR_ORANGE_FAST_MOVE_5M_PERCENT),
+      fastRedDrop5mPercent: -Math.abs(config.ST1_RESCUE_RADAR_FAST_RED_MOVE_5M_PERCENT),
+      fastRedMinPositions: config.ST1_RESCUE_RADAR_FAST_RED_MIN_POSITIONS,
+      fastRedNegativeRatio: config.ST1_RESCUE_RADAR_FAST_RED_NEGATIVE_RATIO,
+      fastRedPnlDelta3mUsdt: config.ST1_RESCUE_RADAR_FAST_RED_PNL_DELTA_3M_USDT,
+      slowRedDrop10mPercent: -Math.abs(config.ST1_RESCUE_RADAR_SLOW_RED_MOVE_10M_PERCENT),
+      slowRedMinPositions: config.ST1_RESCUE_RADAR_SLOW_RED_MIN_POSITIONS,
+      slowRedNegativeRatio: config.ST1_RESCUE_RADAR_SLOW_RED_NEGATIVE_RATIO,
+      slowRedBtc15Ema50MinDistancePercent: config.ST1_RESCUE_RADAR_SLOW_RED_BTC15_EMA50_MIN_DISTANCE_PERCENT,
+      directionFlipMinPositions: config.ST1_RESCUE_RADAR_DIRECTION_FLIP_MIN_POSITIONS,
+      directionFlipNegativeRatio: config.ST1_RESCUE_RADAR_DIRECTION_FLIP_NEGATIVE_RATIO,
+      recoveryConfirmMs: config.ST1_RESCUE_RADAR_RECOVERY_CONFIRM_MS
+    });
+    this.st1RescueCloseInProgress = false;
+    this.entryFunnelWindow = this.createEntryFunnelWindow();
+
     this.ambushList = new Map();
     this.activePositions = new Map();
     this.tradeStats = {
@@ -143,6 +174,150 @@ export class TradingLoop {
 
   getSessionStatsSnapshot() {
     return { ...this.sessionStats };
+  }
+
+  isSt1RescueRadarRuntimeEnabled() {
+    return config.ST1_RESCUE_RADAR_ENABLED === true
+      && (String(process.env.NODE_ENV || '').toLowerCase() !== 'test'
+        || process.env.ALLOW_TEST_RESCUE_RADAR === 'true');
+  }
+
+  createEntryFunnelWindow() {
+    const makeSide = () => ({
+      setup: new Set(), bodyBreak: new Set(), coinDirection: new Set(), trendGuard: new Set(),
+      breadth: new Set(), risk: new Set(), btc15Final: new Set(), opened: new Set()
+    });
+    return { startedAt: Date.now(), LONG: makeSide(), SHORT: makeSide(), rejections: new Map() };
+  }
+
+  normalizeEntryFunnelSide(signal) {
+    return String(signal || '').toUpperCase() === 'SELL' ? 'SHORT' : 'LONG';
+  }
+
+  markEntryFunnelStage(signal, stage, coin) {
+    if (!config.ST1_ENTRY_FUNNEL_RADAR_ENABLED || !coin) return;
+    const side = this.normalizeEntryFunnelSide(signal);
+    const bucket = this.entryFunnelWindow?.[side]?.[stage];
+    if (bucket instanceof Set) bucket.add(String(coin).toUpperCase());
+  }
+
+  markEntryFunnelRejection(signal, coin, reason) {
+    if (!config.ST1_ENTRY_FUNNEL_RADAR_ENABLED || !coin || !reason) return;
+    const side = this.normalizeEntryFunnelSide(signal);
+    const key = `${side}:${String(coin).toUpperCase()}`;
+    this.entryFunnelWindow.rejections.set(key, {
+      coin: String(coin).toUpperCase(), side, reason: String(reason), at: Date.now()
+    });
+  }
+
+  getEntryFunnelSnapshot({ reset = false } = {}) {
+    const counts = {};
+    for (const side of ['LONG', 'SHORT']) {
+      counts[side] = {};
+      const src = this.entryFunnelWindow?.[side] || {};
+      for (const stage of ['setup', 'bodyBreak', 'coinDirection', 'trendGuard', 'breadth', 'risk', 'btc15Final', 'opened']) {
+        counts[side][stage] = src[stage] instanceof Set ? src[stage].size : 0;
+      }
+    }
+    const ambush = this.getAmbushDirectionCounts();
+    const snapshot = {
+      startedAt: this.entryFunnelWindow?.startedAt || Date.now(), endedAt: Date.now(),
+      pusu: { LONG: ambush.longCount || 0, SHORT: ambush.shortCount || 0 },
+      ...counts,
+      recentRejections: [...(this.entryFunnelWindow?.rejections?.values?.() || [])]
+        .sort((a, b) => b.at - a.at).slice(0, 6)
+    };
+    if (reset) this.entryFunnelWindow = this.createEntryFunnelWindow();
+    return snapshot;
+  }
+
+  async loadSt1RescueRadarFrames() {
+    const limit = Math.max(210, Number(config.ST1_RESCUE_RADAR_CANDLE_LIMIT || 220));
+    const frames = {};
+    await Promise.all(['1m', '3m', '5m', '15m'].map(async (interval) => {
+      frames[interval] = this.historicalCandleCache
+        ? await this.historicalCandleCache.getOrFetchCandles(BTC_SYMBOL, interval, limit)
+        : await this.marketData.getKlines(BTC_SYMBOL, interval, limit);
+    }));
+    return frames;
+  }
+
+  buildPaperRescueRadarPositions(signal = 'BUY') {
+    const normalized = signal === 'SELL' ? 'SELL' : 'BUY';
+    const result = [];
+    for (const [symbol, position] of this.activePositions) {
+      if (!this.isPositionBotManaged(position) || position.signal !== normalized) continue;
+      const markPrice = Number(position.lastMonitoredPrice || position.entryPrice);
+      const entryPrice = Number(position.entryPrice);
+      const notional = Number(position.executedNotionalUsdt ?? position.tradeSizeUsdt ?? 0);
+      if (!(entryPrice > 0) || !(markPrice > 0)) continue;
+      const moveRatio = normalized === 'BUY'
+        ? (markPrice - entryPrice) / entryPrice
+        : (entryPrice - markPrice) / entryPrice;
+      result.push({ symbol, side: normalized, entryPrice, markPrice, quantity: Number(position.quantity || 0), unrealizedProfit: notional * moveRatio });
+    }
+    return result;
+  }
+
+  async evaluateSt1RescueRadar() {
+    if (!this.isSt1RescueRadarRuntimeEnabled()) return null;
+    const now = Date.now();
+    const [frames, btcPrice] = await Promise.all([
+      this.loadSt1RescueRadarFrames(),
+      typeof this.orderService?.getCurrentPrice === 'function'
+        ? this.orderService.getCurrentPrice(BTC_SYMBOL).catch(() => null)
+        : Promise.resolve(null)
+    ]);
+    return this.st1RescueRadar.evaluate({
+      now, frames, btcPrice,
+      breadthState: this.marketBreadth?.current?.breadth15m?.state || 'MISSING',
+      managedLongs: this.buildPaperRescueRadarPositions('BUY'),
+      managedShorts: this.buildPaperRescueRadarPositions('SELL')
+    });
+  }
+
+  async emergencyClosePaperPositionsForRescueRadar(radarResult) {
+    const isPaper = String(process.env.APP_MODE || config.APP_MODE || 'paper').toLowerCase() === 'paper';
+    if (!isPaper || config.ST1_RESCUE_RADAR_PAPER_CLOSE_ENABLED !== true || !radarResult?.emergencyExit) {
+      return { triggered: false, reason: 'PAPER_RESCUE_CLOSE_NOT_APPLICABLE' };
+    }
+    if (this.st1RescueCloseInProgress) return { triggered: false, reason: 'RESCUE_CLOSE_ALREADY_RUNNING' };
+    const riskSide = radarResult.riskSide === 'SHORT' ? 'SHORT' : 'LONG';
+    const targetSignal = riskSide === 'SHORT' ? 'SELL' : 'BUY';
+    const targets = [...this.activePositions.values()].filter(
+      (position) => this.isPositionBotManaged(position) && position.signal === targetSignal
+    );
+    if (targets.length === 0) return { triggered: false, reason: `NO_OPEN_${riskSide}` };
+    this.st1RescueCloseInProgress = true;
+    const closed = []; const failed = [];
+    try {
+      for (const position of targets) {
+        try {
+          const currentPrice = Number(position.lastMonitoredPrice || await this.orderService.getCurrentPrice(position.coin));
+          const result = await this.closeManagedPositionAtMarket(position, currentPrice, 'ST1_RESCUE_RADAR');
+          if (!result?.closed) throw new Error('PAPER_RESCUE_CLOSE_NOT_CONFIRMED');
+          this.activePositions.delete(position.coin);
+          this.recordClosedTrade(result.notification);
+          await this.notifyClosedPosition(result.notification);
+          closed.push(position.coin);
+        } catch (error) {
+          failed.push({ coin: position.coin, error: error.message });
+          logger.error('ST1 Rescue Radar paper close failed', { coin: position.coin, error: error.message });
+        }
+      }
+      this.st1RescueRadar.beginRecovery(Date.now(), radarResult.reason || 'ST1_RESCUE_RED', riskSide);
+      await NotificationService.sendMessage(
+        `🚨 <b>ST1 KURTARMA RADARI — RED</b>\n` +
+        `Risk Altındaki Taraf: <code>${riskSide}</code>\n` +
+        `Neden: <code>${radarResult.reason || 'ST1_RESCUE_RED'}</code>\n` +
+        `PAPER Kapatılan: <code>${closed.length}/${targets.length}</code>\n` +
+        `Başarısız: <code>${failed.length}</code>\n` +
+        `Durum: <code>RECOVERY — ${riskSide}</code>`
+      );
+      return { triggered: true, closed, failed, riskSide };
+    } finally {
+      this.st1RescueCloseInProgress = false;
+    }
   }
 
   isUnlimitedPaperPositions() {
@@ -616,6 +791,21 @@ export class TradingLoop {
     };
 
     await NotificationService.sendAmbushSummary(result);
+    if (config.ST1_ENTRY_FUNNEL_RADAR_ENABLED || config.ST1_RESCUE_RADAR_ENABLED) {
+      let rescue = this.st1RescueRadar?.lastEvaluation || null;
+      if (this.isSt1RescueRadarRuntimeEnabled()) {
+        try { rescue = await this.evaluateSt1RescueRadar(); }
+        catch (error) { logger.warn('ST1 rescue radar scan-report evaluation failed', { error: error.message }); }
+      }
+      if (typeof NotificationService.sendSt1EntryAndRescueRadar === 'function') {
+        await NotificationService.sendSt1EntryAndRescueRadar({
+          funnel: this.getEntryFunnelSnapshot({ reset: true }),
+          rescue
+        });
+      } else {
+        this.getEntryFunnelSnapshot({ reset: true });
+      }
+    }
   }
 
   async start() {
@@ -1161,6 +1351,7 @@ export class TradingLoop {
             ambush.readyRegime = 'ST1_BB_15M_BODY_BREAK';
             ambush.st1Setup = st1Setup;
             ambush.st1LastFilterReason = null;
+            this.markEntryFunnelStage(ambush.expectedSignal, 'setup', coin);
 
             logger.info('ST1 15m Bollinger setup armed', {
               coin,
@@ -1201,6 +1392,7 @@ export class TradingLoop {
           if (!this.isSt1BodyBreakTriggered(ambush.st1Setup, currentPrice)) {
             continue;
           }
+          this.markEntryFunnelStage(ambush.expectedSignal, 'bodyBreak', coin);
 
           const coinDirection = this.evaluateSt1CoinDirection(st1Candles, ambush.expectedSignal);
           if (!coinDirection.allowed) {
@@ -1215,8 +1407,10 @@ export class TradingLoop {
               });
               ambush.st1LastFilterReason = coinDirection.reason;
             }
+            this.markEntryFunnelRejection(ambush.expectedSignal, coin, coinDirection.reason);
             continue;
           }
+          this.markEntryFunnelStage(ambush.expectedSignal, 'coinDirection', coin);
           ambush.st1LastFilterReason = null;
 
           try {
@@ -1493,6 +1687,7 @@ export class TradingLoop {
         );
 
         if (entry) {
+          this.markEntryFunnelStage(signal, 'opened', coin);
           ambush.triggered = true;
           ambush.direction = signal;
           this.activePositions.set(coin, entry.position);
@@ -1891,6 +2086,7 @@ export class TradingLoop {
           }
         }
 
+        position.lastMonitoredPrice = Number(currentPrice);
         const result = await this.syncPositionLifecycle(position, lastCandle, coinCandles1m, Number(currentPrice));
 
         if (result?.closed) {
@@ -2140,6 +2336,14 @@ export class TradingLoop {
 
     if (!this.orderService.isLiveTradingEnabled()) {
       await this.monitorManagedPositions();
+      if (this.isSt1RescueRadarRuntimeEnabled()) {
+        try {
+          const radarResult = await this.evaluateSt1RescueRadar();
+          if (radarResult?.emergencyExit) await this.emergencyClosePaperPositionsForRescueRadar(radarResult);
+        } catch (error) {
+          logger.warn('ST1 Rescue Radar paper evaluation failed', { error: error.message });
+        }
+      }
       return;
     }
 
@@ -2187,8 +2391,15 @@ export class TradingLoop {
         return null;
       }
 
+      if (this.st1RescueRadar?.recoveryActive && this.st1RescueRadar.isEntryBlocked(signal)) {
+        this.markEntryFunnelRejection(signal, coin, 'RESCUE_RECOVERY_ENTRY_LOCK');
+        logger.warn('Position entry rejected by ST1 Rescue Radar recovery lock', { coin, signal, riskSide: this.st1RescueRadar.recoverySide });
+        return null;
+      }
+
       const entryTrendGuard = await this.validateEntryTrend(signal);
       if (!entryTrendGuard.allowed) {
+        this.markEntryFunnelRejection(signal, coin, entryTrendGuard.reason || 'BTC_ETH_TREND_GUARD');
         logger.warn('Position entry rejected by final BTC/ETH trend guard', {
           coin,
           signal,
@@ -2199,12 +2410,15 @@ export class TradingLoop {
         });
         return null;
       }
+      this.markEntryFunnelStage(signal, 'trendGuard', coin);
 
       const regimePolicy = this.evaluateSelectiveRegimePolicy(signal, entryTrendGuard, marketBreadth);
       if (!regimePolicy.allowed) {
+        this.markEntryFunnelRejection(signal, coin, regimePolicy.reason || 'BREADTH_POLICY');
         logger.warn('Position entry rejected by market breadth policy', { coin, signal, ...regimePolicy });
         return null;
       }
+      this.markEntryFunnelStage(signal, 'breadth', coin);
 
       let planningCandles = recentCandles;
       if (this.isDelayedProtectionMode()) {
@@ -2315,6 +2529,7 @@ export class TradingLoop {
         }
       );
       if (!finalRiskCheck.approved) {
+        this.markEntryFunnelRejection(signal, coin, finalRiskCheck.reason || 'FINAL_RISK_CHECK');
         logger.warn('Position entry rejected by final risk check', {
           coin,
           signal,
@@ -2323,11 +2538,13 @@ export class TradingLoop {
         });
         return null;
       }
+      this.markEntryFunnelStage(signal, 'risk', coin);
 
       // ABSOLUTE LAST ENTRY AUTHORITY: nothing may override BTC 15m SuperTrend.
       // LONG requires UP, SHORT requires DOWN, missing/contrary data fails closed.
       const finalDirectionalGate = await this.evaluateFinalDirectionalEntryGate(coin, signal, marketBreadth);
       if (!finalDirectionalGate.allowed) {
+        this.markEntryFunnelRejection(signal, coin, finalDirectionalGate.reason || 'BTC15_FINAL_GATE');
         logger.warn('Position entry rejected by strict final BTC15 SuperTrend gate', {
           coin,
           signal,
@@ -2335,6 +2552,7 @@ export class TradingLoop {
         });
         return null;
       }
+      this.markEntryFunnelStage(signal, 'btc15Final', coin);
       logger.info('Strict final BTC15 SuperTrend gate passed', { coin, signal, ...finalDirectionalGate });
 
       const orderResult = await this.orderService.placeOrder({

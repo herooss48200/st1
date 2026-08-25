@@ -8,6 +8,9 @@ describe('ST1 R41.1 PAPER final profile', () => {
     expect(config.PAPER_UNLIMITED_POSITIONS).toBe(true);
     expect(config.MAX_POSITIONS).toBe(5); // reserved future LIVE safety cap
     expect(config.MAX_POSITIONS_PER_COIN).toBe(1);
+    expect(config.ST1_ENTRY_FUNNEL_RADAR_ENABLED).toBe(true);
+    expect(config.ST1_RESCUE_RADAR_ENABLED).toBe(true);
+    expect(config.ST1_RESCUE_RADAR_PAPER_CLOSE_ENABLED).toBe(true);
   });
 
   test('trading loop resolves PAPER aggregate capacity as unlimited', () => {

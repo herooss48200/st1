@@ -397,6 +397,48 @@ ${breadthText}
     return this.sendMessage(text);
   }
 
+  async sendSt1EntryAndRescueRadar({ funnel = {}, rescue = null } = {}) {
+    if (!this.config.ENABLE_TELEGRAM) return false;
+    const fmt = (value, digits = 3) => Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : '-';
+    const long = funnel.LONG || {};
+    const short = funnel.SHORT || {};
+    const pusu = funnel.pusu || { LONG: 0, SHORT: 0 };
+    const rejected = Array.isArray(funnel.recentRejections) ? funnel.recentRejections : [];
+    const rejectLines = rejected.length > 0
+      ? rejected.map((item) => `• ${item.coin} ${item.side} → <code>${item.reason}</code>`).join('\n')
+      : '• Yok';
+    const r = rescue || {};
+    const m = r.metrics || {};
+    const level = r.level || 'VERİ_YOK';
+    const riskSide = r.riskSide || 'YOK';
+
+    const text = `🔬 <b>ST1 GİRİŞ + KURTARMA RADARI</b>
+━━━━━━━━━━━━━━━━━━━━
+🕐 Saat: ${new Date().toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}
+
+<b>GİRİŞ HUNİSİ — SON 15 DK</b>
+🟢 LONG: Pusu <code>${pusu.LONG || 0}</code> → Setup <code>${long.setup || 0}</code> → BodyBreak <code>${long.bodyBreak || 0}</code> → Coin EMA/ST <code>${long.coinDirection || 0}</code> → BTC/ETH <code>${long.trendGuard || 0}</code> → Breadth <code>${long.breadth || 0}</code> → Risk <code>${long.risk || 0}</code> → BTC15 Final <code>${long.btc15Final || 0}</code> → Açılan <code>${long.opened || 0}</code>
+🔴 SHORT: Pusu <code>${pusu.SHORT || 0}</code> → Setup <code>${short.setup || 0}</code> → BodyBreak <code>${short.bodyBreak || 0}</code> → Coin EMA/ST <code>${short.coinDirection || 0}</code> → BTC/ETH <code>${short.trendGuard || 0}</code> → Breadth <code>${short.breadth || 0}</code> → Risk <code>${short.risk || 0}</code> → BTC15 Final <code>${short.btc15Final || 0}</code> → Açılan <code>${short.opened || 0}</code>
+
+🚫 <b>Son Yakın Reddedilenler</b>
+${rejectLines}
+
+🛡️ <b>KURTARMA RADARI — ${level}</b>
+Risk Altındaki Taraf: <code>${riskSide}</code>
+Neden: <code>${r.reason || 'RADAR_CLEAR'}</code>
+BTC ST 1/3/5/15: <code>${m.btc1Supertrend || '-'} / ${m.btc3Supertrend || '-'} / ${m.btc5Supertrend || '-'} / ${m.btc15Supertrend || '-'}</code>
+BTC 5dk: <code>${fmt(m.btcReturn5mPercent)}%</code> | 10dk: <code>${fmt(m.btcReturn10mPercent)}%</code>
+BTC15 Fiyat↔EMA50: <code>${fmt(m.btc15CloseVsEma50Percent)}%</code>
+ST1 Karşı SHORT 3m/5m: <code>${m.btc3RawSt1Short ? 'EVET' : 'HAYIR'} / ${m.btc5RawSt1Short ? 'EVET' : 'HAYIR'}</code>
+ST1 Karşı LONG 3m/5m: <code>${m.btc3RawSt1Long ? 'EVET' : 'HAYIR'} / ${m.btc5RawSt1Long ? 'EVET' : 'HAYIR'}</code>
+Breadth: <code>${m.breadthState || '-'}</code>
+Açık LONG: <code>${m.managedLongCount || 0}</code> | Negatif: <code>${fmt((m.negativeLongRatio || 0) * 100, 1)}%</code> | PnL: <code>${fmt(m.longPortfolioPnlUsdt)} USDT</code>
+Açık SHORT: <code>${m.managedShortCount || 0}</code> | Negatif: <code>${fmt((m.negativeShortRatio || 0) * 100, 1)}%</code> | PnL: <code>${fmt(m.shortPortfolioPnlUsdt)} USDT</code>
+
+ℹ️ NORMAL/YELLOW/ORANGE: gözlem. RED: yalnız PAPER riskli sepeti kapatır ve RECOVERY kilidi uygular.`;
+    return this.sendMessage(text);
+  }
+
   async sendTradeSummary(summary) {
     const opened = summary.opened || [];
     const closed = summary.closed || [];

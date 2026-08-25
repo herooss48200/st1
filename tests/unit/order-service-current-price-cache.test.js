@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import orderService from '../../src/services/order-service.js';
+import axios from 'axios';
 
 describe('OrderService getCurrentPrice cycle-cache freshness', () => {
   const originalAppMode = process.env.APP_MODE;
@@ -98,4 +99,25 @@ describe('OrderService getCurrentPrice cycle-cache freshness', () => {
     expect(signedRequestSpy).toHaveBeenCalledTimes(1);
     expect(signedRequestSpy).toHaveBeenCalledWith('GET', '/fapi/v1/premiumIndex', { symbol: 'DDDUSDT' });
   });
+  test('PAPER fetches unsigned public mark price instead of returning null', async () => {
+    process.env.APP_MODE = 'paper';
+    process.env.ENABLE_REAL_TRADING = 'false';
+
+    const signedRequestSpy = jest.spyOn(orderService, 'signedRequest');
+    const axiosGetSpy = jest.spyOn(axios, 'get').mockResolvedValue({
+      data: { markPrice: '123.45' }
+    });
+
+    const price = await orderService.getCurrentPrice('BTCUSDT');
+
+    expect(price).toBe(123.45);
+    expect(signedRequestSpy).not.toHaveBeenCalled();
+    expect(axiosGetSpy).toHaveBeenCalledWith(
+      expect.stringContaining('/fapi/v1/premiumIndex'),
+      expect.objectContaining({
+        params: { symbol: 'BTCUSDT' }
+      })
+    );
+  });
+
 });

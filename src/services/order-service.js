@@ -1377,14 +1377,26 @@ class OrderService {
 
     try {
       if (!this.isLiveTradingEnabled()) {
+        // PAPER still needs a real market price for ST1 body-break triggers and
+        // rescue-radar measurements. Use Binance Futures public mark price only;
+        // this path is unsigned and can never place or modify an order.
+        const response = await axios.get(`${this.getBaseUrl()}/fapi/v1/premiumIndex`, {
+          params: { symbol },
+          timeout: config.MARKET_DATA_REQUEST_TIMEOUT_MS
+        });
+        const publicMarkPrice = Number(response?.data?.markPrice);
+        if (!Number.isFinite(publicMarkPrice) || publicMarkPrice <= 0) {
+          throw new Error(`Invalid public mark price for ${symbol}`);
+        }
         this.logTrace('getCurrentPrice.response', {
           timestamp: new Date().toISOString(),
           symbol,
-          currentPrice: null,
+          currentPrice: publicMarkPrice,
+          source: 'publicPremiumIndex',
           live: false,
           elapsedTimeMs: Date.now() - startedAt
         });
-        return null;
+        return publicMarkPrice;
       }
 
       const hasFreshCycleCache = this.isPositionRiskCacheFresh();

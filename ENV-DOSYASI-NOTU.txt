@@ -1,0 +1,4 @@
+Gercek ortam degiskenleri bu klasordeki .env dosyasindadir.
+BINANCE_API_KEY ve BINANCE_API_SECRET kullanici tarafindan verilen degerlerle doldurulmustur.
+Testnet ve Telegram alanlari bos birakilmistir.
+Bu paket gizli bilgi icerir; GitHub veya herkese acik bir yere yuklemeyin.

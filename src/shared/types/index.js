@@ -1,0 +1,80 @@
+// GPTSONO Shared Types
+
+export const TRADE_DIRECTION = {
+  LONG: 'LONG',
+  SHORT: 'SHORT'
+};
+
+export const TREND_TYPE = {
+  UP: 'UP',
+  DOWN: 'DOWN',
+  SIDEWAYS: 'SIDEWAYS'
+};
+
+export const SNIPER_STATUS = {
+  WAITING: 'WAITING',
+  TRIGGERED: 'TRIGGERED',
+  EXPIRED: 'EXPIRED',
+  CANCELED: 'CANCELED'
+};
+
+export const TRADE_STATUS = {
+  PENDING: 'PENDING',
+  OPEN: 'OPEN',
+  CLOSED: 'CLOSED',
+  REJECTED: 'REJECTED',
+  FAILED: 'FAILED'
+};
+
+export const POSITION_STATUS = {
+  OPEN: 'OPEN',
+  CLOSING: 'CLOSING',
+  CLOSED: 'CLOSED'
+};
+
+export const ORDER_STATUS = {
+  PENDING: 'PENDING',
+  FILLED: 'FILLED',
+  PARTIALLY_FILLED: 'PARTIALLY_FILLED',
+  CANCELED: 'CANCELED',
+  FAILED: 'FAILED'
+};
+
+export const ORDER_TYPE = {
+  MARKET: 'MARKET',
+  LIMIT: 'LIMIT',
+  STOP_MARKET: 'STOP_MARKET',
+  TAKE_PROFIT_MARKET: 'TAKE_PROFIT_MARKET'
+};
+
+export const COIN_STATUS = {
+  ACTIVE: 'ACTIVE',
+  INACTIVE: 'INACTIVE',
+  SUSPENDED: 'SUSPENDED',
+  DELISTED: 'DELISTED'
+};
+
+export const CANDLE_INTERVAL = {
+  ONE_MINUTE: '1m',
+  FIVE_MINUTE: '5m',
+  FIFTEEN_MINUTE: '15m',
+  HOUR: '1h',
+  FOUR_HOUR: '4h',
+  DAY: '1d'
+};
+
+export const APP_MODE = {
+  PAPER: 'paper',
+  TESTNET: 'testnet',
+  LIVE: 'live'
+};
+
+export const ERROR_TYPE = {
+  VALIDATION: 'VALIDATION',
+  EXCHANGE: 'EXCHANGE',
+  DATABASE: 'DATABASE',
+  NETWORK: 'NETWORK',
+  RISK: 'RISK',
+  CONFIGURATION: 'CONFIGURATION',
+  UNKNOWN: 'UNKNOWN'
+};

@@ -1,0 +1,28 @@
+AGROS STONUR-ST1 R41.0 VALIDATION
+Date: 2026-08-23
+
+BASE
+- Source baseline: working STONUR R40.3 tree available in /mnt/data/r403inspect.
+- Strategy modifications are limited to:
+  src/config/agros-policy.js
+  src/config/config.js
+  src/engines/trigger-engine.js
+  src/trading-loop.js
+  tests/unit/st1-entry-engine.test.js (new)
+- Documentation additions do not affect runtime.
+
+STATIC CHECKS
+PASS node --check src/trading-loop.js
+PASS node --check src/engines/trigger-engine.js
+PASS node --check src/config/config.js
+PASS node --check src/config/agros-policy.js
+PASS node --check tests/unit/st1-entry-engine.test.js
+
+FULL TEST SUITE
+- Not executed in this container because npm dependency installation did not complete within the tool execution window.
+- Before live deployment run: npm ci && npm test
+- Live deployment must not proceed if tests fail.
+
+ST1 ENTRY CONTRACT
+LONG: red lower-BB setup -> next closed green confirmation -> only candle 1/2/3 live window -> price strictly above setup body top -> coin EMA50>EMA200 -> coin ST UP -> existing STONUR risk/trend/breadth -> strict BTC15 ST UP -> order.
+SHORT: exact inverse.

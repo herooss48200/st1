@@ -1,0 +1,31 @@
+version: '3.9'
+
+services:
+  gptsono:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gptsono-bot
+    restart: unless-stopped
+    environment:
+      - APP_MODE=paper
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    ports:
+      - "3000:3000"
+    networks:
+      - gptsono-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+networks:
+  gptsono-network:
+    driver: bridge

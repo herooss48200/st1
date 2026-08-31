@@ -1056,7 +1056,7 @@ export class TradingLoop {
                   : null
               );
               const threshold = this.resolveSimilarityThresholdPercent();
-              const trendEligibility = this.evaluateTrendAlignment(
+              const trendEligibility = this.evaluateAmbushScanTrendEligibility(
                 btcTrend?.btcTrend || btcTrend?.trend,
                 btcTrend?.ethTrend
               );
@@ -1190,6 +1190,8 @@ export class TradingLoop {
                         ethTrend: trendEligibility.ethTrend,
                         expectedSignal: expectedSignalByTrend,
                         direction: expectedSignalByTrend,
+                        scanReason: trendEligibility.reason,
+                        scanOnly: trendEligibility.scanOnly === true,
                         readyReason: null,
                         readyRegime: null
                       };
@@ -1226,6 +1228,8 @@ export class TradingLoop {
                   qualifiedAmbushes: this.ambushList.size,
                   btcCandles: btcTrendCandles.length,
                   trend: trendEligibility.btcTrend,
+                  scanReason: trendEligibility.reason,
+                  scanOnly: trendEligibility.scanOnly === true,
                   similarityInterval,
                   refreshIntervalMinutes: ambushRefreshIntervalMinutes
                 });
@@ -1233,7 +1237,7 @@ export class TradingLoop {
                 const fetchedCoins = topCoins.length;
                 ambushScanResult = this.buildAmbushScanResult({
                   status: 'COMPLETED',
-                  reason: null,
+                  reason: trendEligibility.scanOnly === true ? trendEligibility.reason : null,
                   targetCoins: topCoinLimitForRefresh,
                   fetchedCoins,
                   scannedCoins,
@@ -1822,6 +1826,32 @@ export class TradingLoop {
       breadthUsed: breadthIsFresh,
       btcTrend: normalizedBtcTrend,
       ethTrend: normalizedEthTrend
+    };
+  }
+
+  evaluateAmbushScanTrendEligibility(btcTrend, ethTrend, breadthSnapshot = this.marketBreadth?.current) {
+    const entryEligibility = this.evaluateTrendAlignment(btcTrend, ethTrend, breadthSnapshot);
+    if (entryEligibility.reason !== 'BTC_ETH_STRONG_CONFLICT') {
+      return entryEligibility;
+    }
+
+    const direction = btcTrend === TREND_TYPE.UP
+      ? 'BUY'
+      : btcTrend === TREND_TYPE.DOWN
+        ? 'SELL'
+        : null;
+
+    if (!direction) {
+      return entryEligibility;
+    }
+
+    return {
+      ...entryEligibility,
+      allowed: true,
+      direction,
+      reason: 'BTC_ETH_CONFLICT_SCAN_BTC_LED',
+      scanOnly: true,
+      entryAllowed: false
     };
   }
 

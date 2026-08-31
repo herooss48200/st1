@@ -333,6 +333,8 @@ ${typeEmoji} Tip: <code>${triggerType}</code>
       BTC_TREND_INVALID_OR_SIDEWAYS: 'BTC trendi yatay veya geçersiz olduğu için yeni aday taraması yapılmadı.',
       ETH_TREND_INVALID_OR_SIDEWAYS: 'ETH trendi yatay veya geçersiz olduğu için yeni aday taraması yapılmadı.',
       BTC_ETH_TREND_MISMATCH: 'BTC ve ETH trend yönleri uyuşmadığı için yeni aday taraması yapılmadı.',
+      BTC_ETH_STRONG_CONFLICT: 'BTC ve ETH güçlü biçimde zıt yönde; giriş güvenliği nedeniyle tarama atlandı.',
+      BTC_ETH_CONFLICT_SCAN_BTC_LED: 'BTC/ETH zıt: coinler BTC yönünde tarandı; giriş için yeniden hizalanma zorunlu.',
       BTC_TREND_DATA_UNAVAILABLE: 'BTC trend verisi yetersiz.',
       ETH_TREND_DATA_UNAVAILABLE: 'ETH trend verisi yetersiz.',
       BTC_SIMILARITY_DATA_UNAVAILABLE: 'BTC benzerlik verisi yetersiz.',
@@ -388,6 +390,7 @@ ${breadthText}
 📊 Benzerlik Esigi: <code>%${threshold}</code>
 📈 BTC Trend: <code>${btcTrend}</code>
 📉 ETH Trend: <code>${ethTrend}</code>
+${reasonCode ? `🧭 Tarama Modu: <code>${readableReason}</code>` : ''}
 ${breadthText}
 🎯 Toplam Pusu: <code>${qualifiedAmbushes}</code>
 🟢 Long Pusu: <code>${longCount}</code> | 🔴 Short Pusu: <code>${shortCount}</code>
@@ -713,4 +716,3 @@ ${new Date().toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
 }
 
 export default NotificationService.getInstance();
-

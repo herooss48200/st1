@@ -44,6 +44,21 @@ describe('NotificationService ambush summary formatting', () => {
     expect(message).toContain('Pusu Taraması Başarısız');
   });
 
+  test('legacy strong conflict skip shows the real reason', async () => {
+    const sendSpy = jest.spyOn(notificationService, 'sendMessage').mockResolvedValue(true);
+
+    await notificationService.sendAmbushSummary({
+      status: 'SKIPPED',
+      reason: 'BTC_ETH_STRONG_CONFLICT',
+      btcTrend: 'UP',
+      ethTrend: 'DOWN'
+    });
+
+    const message = sendSpy.mock.calls[0][0];
+    expect(message).toContain('BTC ve ETH güçlü biçimde zıt yönde');
+    expect(message).not.toContain('Tarama güvenli şekilde atlandı.');
+  });
+
   test('COMPLETED status uses completed headline', async () => {
     const sendSpy = jest.spyOn(notificationService, 'sendMessage').mockResolvedValue(true);
 
@@ -79,5 +94,25 @@ describe('NotificationService ambush summary formatting', () => {
     expect(message).toContain('Yatay Coin: <code>7</code>');
     expect(message).toContain('Long Pusu: <code>7</code>');
     expect(message).toContain('Short Pusu: <code>5</code>');
+  });
+
+  test('COMPLETED conflict scan shows BTC-led scan mode and entry safety requirement', async () => {
+    const sendSpy = jest.spyOn(notificationService, 'sendMessage').mockResolvedValue(true);
+
+    await notificationService.sendAmbushSummary({
+      status: 'COMPLETED',
+      reason: 'BTC_ETH_CONFLICT_SCAN_BTC_LED',
+      targetCoins: 300,
+      fetchedCoins: 300,
+      scannedCoins: 296,
+      btcTrend: 'DOWN',
+      ethTrend: 'UP'
+    });
+
+    const message = sendSpy.mock.calls[0][0];
+    expect(message).toContain('Pusu Taraması Tamamlandı');
+    expect(message).toContain('Tarama Modu');
+    expect(message).toContain('coinler BTC yönünde tarandı');
+    expect(message).toContain('giriş için yeniden hizalanma zorunlu');
   });
 });

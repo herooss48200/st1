@@ -96,6 +96,7 @@ function createLoop({
   };
 
   const similarityEngine = {
+    threshold: 0.52,
     analyzeSimilarity: jest.fn(async (coinCandles) => {
       const candle = coinCandles[0] || {};
       const symbolHint = candle.symbolHint || null;
@@ -104,6 +105,7 @@ function createLoop({
       }
 
       return {
+        valid: true,
         score: 0.9,
         btcSimilarity: 0.9,
         ethSimilarity: 0.9,
@@ -190,27 +192,61 @@ describe('Ambush Scan Summary Statuses', () => {
     expect(payload.scannedCoins).toBe(0);
   });
 
-  test('B) BTC UP + ETH DOWN => SKIPPED with mismatch reason', async () => {
-    const { loop, similarityEngine } = createLoop({
+  test('B) BTC UP + ETH DOWN => COMPLETED as BTC-led BUY conflict scan', async () => {
+    const { loop, similarityEngine, topCoinMock } = createLoop({
       trendResult: {
         trend: TREND_TYPE.UP,
         confidence: 0.9,
         btcTrend: TREND_TYPE.UP,
         ethTrend: TREND_TYPE.DOWN
-      }
+      },
+      topCoinsData: [{ symbol: 'AAAUSDT' }]
     });
 
     const enterSpy = jest.spyOn(loop, 'enterPosition');
 
     await loop.runStrategyCycle();
 
-    expect(similarityEngine.analyzeSimilarity).not.toHaveBeenCalled();
+    expect(topCoinMock).toHaveBeenCalledTimes(1);
+    expect(similarityEngine.analyzeSimilarity).toHaveBeenCalledTimes(1);
     expect(enterSpy).not.toHaveBeenCalled();
 
     const payload = notificationMock.sendAmbushSummary.mock.calls[0][0];
-    expect(payload.status).toBe('SKIPPED');
-    expect(payload.reason).toBe('BTC_ETH_STRONG_CONFLICT');
-    expect(payload.scannedCoins).toBe(0);
+    expect(payload.status).toBe('COMPLETED');
+    expect(payload.reason).toBe('BTC_ETH_CONFLICT_SCAN_BTC_LED');
+    expect(payload.fetchedCoins).toBe(1);
+    expect(payload.scannedCoins).toBe(1);
+    expect(loop.ambushList.get('AAAUSDT')).toEqual(expect.objectContaining({
+      expectedSignal: 'BUY',
+      direction: 'BUY',
+      scanOnly: true,
+      scanReason: 'BTC_ETH_CONFLICT_SCAN_BTC_LED'
+    }));
+  });
+
+  test('B2) BTC DOWN + ETH UP => COMPLETED as BTC-led SELL conflict scan', async () => {
+    const { loop, similarityEngine, topCoinMock } = createLoop({
+      trendResult: {
+        trend: TREND_TYPE.DOWN,
+        confidence: 0.9,
+        btcTrend: TREND_TYPE.DOWN,
+        ethTrend: TREND_TYPE.UP
+      },
+      topCoinsData: [{ symbol: 'BBBUSDT' }]
+    });
+
+    await loop.runStrategyCycle();
+
+    expect(topCoinMock).toHaveBeenCalledTimes(1);
+    expect(similarityEngine.analyzeSimilarity).toHaveBeenCalledTimes(1);
+    const payload = notificationMock.sendAmbushSummary.mock.calls[0][0];
+    expect(payload.status).toBe('COMPLETED');
+    expect(payload.reason).toBe('BTC_ETH_CONFLICT_SCAN_BTC_LED');
+    expect(loop.ambushList.get('BBBUSDT')).toEqual(expect.objectContaining({
+      expectedSignal: 'SELL',
+      direction: 'SELL',
+      scanOnly: true
+    }));
   });
 
   test('C) BTC UP + ETH UP => COMPLETED with fetched/scanned split', async () => {
@@ -232,6 +268,7 @@ describe('Ambush Scan Summary Statuses', () => {
         return candles.map((c) => ({ ...c, symbolHint: symbol }));
       },
       similarityByCoin: () => ({
+        valid: true,
         score: 0.9,
         btcSimilarity: 0.9,
         ethSimilarity: 0.9,

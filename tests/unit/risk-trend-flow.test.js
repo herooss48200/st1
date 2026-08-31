@@ -558,6 +558,32 @@ describe('Risk and Trend Flow Fixes', () => {
     expect(result.reason).toBe('BTC_ETH_STRONG_CONFLICT');
   });
 
+  test('ambush scan eligibility converts a strong conflict to BTC-led scan-only mode', () => {
+    const loop = new TradingLoop(
+      { candleService: {}, marketData: {}, historicalCandleCache: {}, orderService: {} },
+      { similarity: {}, trend: {}, trigger: { period: 20 }, riskManager: {} }
+    );
+
+    expect(loop.evaluateAmbushScanTrendEligibility(TREND_TYPE.UP, TREND_TYPE.DOWN)).toEqual(
+      expect.objectContaining({
+        allowed: true,
+        direction: 'BUY',
+        reason: 'BTC_ETH_CONFLICT_SCAN_BTC_LED',
+        scanOnly: true,
+        entryAllowed: false
+      })
+    );
+    expect(loop.evaluateAmbushScanTrendEligibility(TREND_TYPE.DOWN, TREND_TYPE.UP)).toEqual(
+      expect.objectContaining({
+        allowed: true,
+        direction: 'SELL',
+        reason: 'BTC_ETH_CONFLICT_SCAN_BTC_LED',
+        scanOnly: true,
+        entryAllowed: false
+      })
+    );
+  });
+
   test('trend alignment allows BTC-led direction when ETH is SIDEWAYS', () => {
     const loop = new TradingLoop(
       { candleService: {}, marketData: {}, historicalCandleCache: {}, orderService: {} },

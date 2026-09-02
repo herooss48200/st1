@@ -276,10 +276,13 @@ export class TradingLoop {
     });
   }
 
-  async emergencyClosePaperPositionsForRescueRadar(radarResult) {
+  async emergencyClosePositionsForRescueRadar(radarResult) {
     const isPaper = String(process.env.APP_MODE || config.APP_MODE || 'paper').toLowerCase() === 'paper';
-    if (!isPaper || config.ST1_RESCUE_RADAR_PAPER_CLOSE_ENABLED !== true || !radarResult?.emergencyExit) {
-      return { triggered: false, reason: 'PAPER_RESCUE_CLOSE_NOT_APPLICABLE' };
+    const isLive = this.orderService.isLiveTradingEnabled();
+    const closeEnabled = (isPaper && config.ST1_RESCUE_RADAR_PAPER_CLOSE_ENABLED === true)
+      || (isLive && config.ST1_RESCUE_RADAR_LIVE_CLOSE_ENABLED === true);
+    if (!closeEnabled || !radarResult?.emergencyExit) {
+      return { triggered: false, reason: 'RESCUE_CLOSE_NOT_APPLICABLE' };
     }
     if (this.st1RescueCloseInProgress) return { triggered: false, reason: 'RESCUE_CLOSE_ALREADY_RUNNING' };
     const riskSide = radarResult.riskSide === 'SHORT' ? 'SHORT' : 'LONG';
@@ -295,14 +298,14 @@ export class TradingLoop {
         try {
           const currentPrice = Number(position.lastMonitoredPrice || await this.orderService.getCurrentPrice(position.coin));
           const result = await this.closeManagedPositionAtMarket(position, currentPrice, 'ST1_RESCUE_RADAR');
-          if (!result?.closed) throw new Error('PAPER_RESCUE_CLOSE_NOT_CONFIRMED');
+          if (!result?.closed) throw new Error('RESCUE_CLOSE_NOT_CONFIRMED');
           this.activePositions.delete(position.coin);
           this.recordClosedTrade(result.notification);
           await this.notifyClosedPosition(result.notification);
           closed.push(position.coin);
         } catch (error) {
           failed.push({ coin: position.coin, error: error.message });
-          logger.error('ST1 Rescue Radar paper close failed', { coin: position.coin, error: error.message });
+          logger.error('ST1 Rescue Radar close failed', { coin: position.coin, mode: isLive ? 'LIVE' : 'PAPER', error: error.message });
         }
       }
       this.st1RescueRadar.beginRecovery(Date.now(), radarResult.reason || 'ST1_RESCUE_RED', riskSide);
@@ -310,7 +313,7 @@ export class TradingLoop {
         `🚨 <b>ST1 KURTARMA RADARI — RED</b>\n` +
         `Risk Altındaki Taraf: <code>${riskSide}</code>\n` +
         `Neden: <code>${radarResult.reason || 'ST1_RESCUE_RED'}</code>\n` +
-        `PAPER Kapatılan: <code>${closed.length}/${targets.length}</code>\n` +
+        `${isLive ? 'LIVE' : 'PAPER'} Kapatılan: <code>${closed.length}/${targets.length}</code>\n` +
         `Başarısız: <code>${failed.length}</code>\n` +
         `Durum: <code>RECOVERY — ${riskSide}</code>`
       );
@@ -328,7 +331,9 @@ export class TradingLoop {
   resolveMaxPositions() {
     if (this.isUnlimitedPaperPositions()) return Number.POSITIVE_INFINITY;
     const parsed = Number.parseInt(process.env.MAX_POSITIONS || String(DEFAULT_MAX_POSITIONS), 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_POSITIONS;
+    const configured = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_POSITIONS;
+    const isLive = this.orderService?.isLiveTradingEnabled?.() === true;
+    return isLive ? Math.min(configured, Number(config.LIVE_MAX_POSITIONS_HARD_CAP)) : configured;
   }
 
   resolveAccountingStatePath() {
@@ -346,7 +351,7 @@ export class TradingLoop {
       const statePath = this.resolveAccountingStatePath();
       if (!fs.existsSync(statePath)) return false;
       const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-      if (!state || Number(state.schema) !== 1) return false;
+      if (!state || ![1, 2].includes(Number(state.schema))) return false;
 
       if (state.tradeStats && typeof state.tradeStats === 'object') {
         this.tradeStats = { ...this.tradeStats, ...state.tradeStats };
@@ -360,6 +365,10 @@ export class TradingLoop {
       this.paperWalletBalanceUsdt = this.paperWalletStartUsdt
         + this.realizedPnlForTradeSizeUsdt
         - this.totalCommissionUsdt;
+      if (Number(state.schema) >= 2 && Array.isArray(state.riskTradeHistory)) {
+        this.riskTradeHistory = state.riskTradeHistory.slice(0, 5000);
+        this.closedTradeHistory = this.riskTradeHistory.slice(0, 20);
+      }
 
       logger.info('Persistent accounting state restored', {
         openedTotal: this.tradeStats.openedTotal,
@@ -386,7 +395,7 @@ export class TradingLoop {
       const statePath = this.resolveAccountingStatePath();
       fs.mkdirSync(path.dirname(statePath), { recursive: true });
       const payload = {
-        schema: 1,
+        schema: 2,
         botName: config.BOT_NAME || 'AGROS',
         appVersion: config.APP_VERSION || null,
         accountingStartedAt: this.accountingStartedAt,
@@ -395,6 +404,7 @@ export class TradingLoop {
         realizedGrossPnlUsdt: this.realizedPnlForTradeSizeUsdt,
         totalCommissionUsdt: this.totalCommissionUsdt,
         netRealizedPnlUsdt: this.realizedPnlForTradeSizeUsdt - this.totalCommissionUsdt,
+        riskTradeHistory: this.riskTradeHistory.slice(0, 5000),
         updatedAt: Date.now()
       };
       const tempPath = `${statePath}.tmp`;
@@ -2369,7 +2379,7 @@ export class TradingLoop {
       if (this.isSt1RescueRadarRuntimeEnabled()) {
         try {
           const radarResult = await this.evaluateSt1RescueRadar();
-          if (radarResult?.emergencyExit) await this.emergencyClosePaperPositionsForRescueRadar(radarResult);
+          if (radarResult?.emergencyExit) await this.emergencyClosePositionsForRescueRadar(radarResult);
         } catch (error) {
           logger.warn('ST1 Rescue Radar paper evaluation failed', { error: error.message });
         }
@@ -2408,6 +2418,14 @@ export class TradingLoop {
         livePriceByCoin,
         skipLiveCachePriming: true
       });
+      if (this.isSt1RescueRadarRuntimeEnabled()) {
+        try {
+          const radarResult = await this.evaluateSt1RescueRadar();
+          if (radarResult?.emergencyExit) await this.emergencyClosePositionsForRescueRadar(radarResult);
+        } catch (error) {
+          logger.warn('ST1 Rescue Radar live evaluation failed', { error: error.message });
+        }
+      }
     } finally {
       this.orderService.clearPositionRiskCycleCache();
       this.orderService.clearOpenOrdersCycleCache();
@@ -2694,7 +2712,7 @@ export class TradingLoop {
       });
 
       const ambushContext = this.ambushList.get(coin);
-      TradeSnapshotService.recordEntry({
+      await TradeSnapshotService.recordEntry({
         tradeId: position.entryOrderId,
         sessionId: this.sessionId,
         sessionStartedAt: this.sessionStartedAt,
@@ -2794,6 +2812,8 @@ export class TradingLoop {
     this.closedTradeHistory.unshift(normalized);
     this.closedTradeHistory = this.closedTradeHistory.slice(0, 20);
     this.riskTradeHistory.unshift(normalized);
+    this.riskTradeHistory = this.riskTradeHistory.slice(0, 5000);
+    this.persistAccountingState();
   }
 
   async syncPositionLifecycle(position, candle, recentCandles = [], currentPriceOverride = null) {
@@ -4778,6 +4798,10 @@ else {
         return;
       }
 
+      if (livePositions.length > maxPositions) {
+        throw new Error(`LIVE_START_POSITION_CAP_EXCEEDED:${livePositions.length}/${maxPositions}`);
+      }
+
       const limit = Math.max(1, maxPositions);
       const positionsToLoad = livePositions.slice(0, limit);
       for (const position of positionsToLoad) {
@@ -4802,6 +4826,7 @@ else {
     } catch (error) {
       logger.error('Failed to sync live open positions on startup', { error: error.message });
       await NotificationService.sendError('LIVE_POSITION_SYNC', error.message);
+      throw error;
     }
   }
 

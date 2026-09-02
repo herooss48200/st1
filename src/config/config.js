@@ -105,6 +105,11 @@ class Config {
     this.LEVERAGE = integer('LEVERAGE', 10);
     this.POSITION_SIZE_PERCENT = parseFloat(process.env.POSITION_SIZE_PERCENT) || 2;
     this.MAX_POSITIONS = integer('MAX_POSITIONS', 15);
+    this.LIVE_MAX_POSITIONS_HARD_CAP = integer('LIVE_MAX_POSITIONS_HARD_CAP', 25);
+    this.LIVE_MAX_TRADE_SIZE_USDT = number('LIVE_MAX_TRADE_SIZE_USDT', 50);
+    this.LIVE_MAX_TOTAL_NOTIONAL_USDT = number('LIVE_MAX_TOTAL_NOTIONAL_USDT', 1250);
+    this.LIVE_MIN_FREE_BALANCE_USDT = number('LIVE_MIN_FREE_BALANCE_USDT', 10);
+    this.LIVE_START_MIN_AVAILABLE_BALANCE_USDT = number('LIVE_START_MIN_AVAILABLE_BALANCE_USDT', 130);
     this.MAX_DAILY_LOSS_PERCENT = parseFloat(process.env.MAX_DAILY_LOSS_PERCENT) || 5;
     this.MAX_DAILY_TRADES = parseInt(process.env.MAX_DAILY_TRADES) || 20000;
     this.TRADE_SIZE_USDT = number('TRADE_SIZE_USDT', 100);
@@ -188,6 +193,7 @@ class Config {
     this.ST1_ENTRY_FUNNEL_RADAR_ENABLED = boolean('ST1_ENTRY_FUNNEL_RADAR_ENABLED', true);
     this.ST1_RESCUE_RADAR_ENABLED = boolean('ST1_RESCUE_RADAR_ENABLED', true);
     this.ST1_RESCUE_RADAR_PAPER_CLOSE_ENABLED = boolean('ST1_RESCUE_RADAR_PAPER_CLOSE_ENABLED', true);
+    this.ST1_RESCUE_RADAR_LIVE_CLOSE_ENABLED = boolean('ST1_RESCUE_RADAR_LIVE_CLOSE_ENABLED', false);
     this.ST1_RESCUE_RADAR_CANDLE_LIMIT = integer('ST1_RESCUE_RADAR_CANDLE_LIMIT', 220);
     this.ST1_RESCUE_RADAR_ST1_RECENT_MINUTES = number('ST1_RESCUE_RADAR_ST1_RECENT_MINUTES', 20);
     this.ST1_RESCUE_RADAR_ST1_BB_TOLERANCE_PERCENT = number('ST1_RESCUE_RADAR_ST1_BB_TOLERANCE_PERCENT', 0.10);
@@ -291,6 +297,8 @@ class Config {
     this.MAX_POSITIONS_PER_COIN = integer('MAX_POSITIONS_PER_COIN', 1);
     this.MAX_MONTHLY_LOSS_PERCENT = number('MAX_MONTHLY_LOSS_PERCENT', 5);
     this.RISK_ACCOUNT_BASE_USDT = number('RISK_ACCOUNT_BASE_USDT', 10000);
+    this.MAX_DAILY_NET_LOSS_USDT = number('MAX_DAILY_NET_LOSS_USDT', 0);
+    this.MAX_MONTHLY_NET_LOSS_USDT = number('MAX_MONTHLY_NET_LOSS_USDT', 0);
 
     // API & Performance
     this.API_RATE_LIMIT_WINDOW = parseInt(process.env.API_RATE_LIMIT_WINDOW) || 60000;
@@ -434,6 +442,24 @@ class Config {
 
     if (this.LEVERAGE < 1 || this.LEVERAGE > 125) {
       throw new Error('LEVERAGE must be between 1 and 125');
+    }
+
+    if (!Number.isInteger(this.LIVE_MAX_POSITIONS_HARD_CAP) || this.LIVE_MAX_POSITIONS_HARD_CAP < 1) {
+      throw new Error('LIVE_MAX_POSITIONS_HARD_CAP must be a positive integer');
+    }
+    for (const key of ['LIVE_MAX_TRADE_SIZE_USDT', 'LIVE_MAX_TOTAL_NOTIONAL_USDT',
+      'LIVE_MIN_FREE_BALANCE_USDT', 'LIVE_START_MIN_AVAILABLE_BALANCE_USDT',
+      'MAX_DAILY_NET_LOSS_USDT', 'MAX_MONTHLY_NET_LOSS_USDT']) {
+      if (!Number.isFinite(this[key]) || this[key] <= 0) {
+        throw new Error(`${key} must be greater than 0`);
+      }
+    }
+    if (this.LIVE_MAX_TOTAL_NOTIONAL_USDT
+      < this.LIVE_MAX_POSITIONS_HARD_CAP * this.LIVE_MAX_TRADE_SIZE_USDT) {
+      throw new Error('LIVE_MAX_TOTAL_NOTIONAL_USDT is below the declared position profile');
+    }
+    if (this.MAX_MONTHLY_NET_LOSS_USDT < this.MAX_DAILY_NET_LOSS_USDT) {
+      throw new Error('MAX_MONTHLY_NET_LOSS_USDT must be at least MAX_DAILY_NET_LOSS_USDT');
     }
 
     if (this.POSITION_SIZE_PERCENT <= 0 || this.POSITION_SIZE_PERCENT > 100) {

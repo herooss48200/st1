@@ -9,6 +9,8 @@ class RiskManager {
     this.maxPositionsTotal = TRADING_CONSTANTS.MAX_TOTAL_POSITIONS;
     this.maxPositionsPerCoin = TRADING_CONSTANTS.MAX_POSITIONS_PER_COIN;
     this.accountBaseUsdt = config.RISK_ACCOUNT_BASE_USDT;
+    this.maxDailyNetLossUsdt = config.MAX_DAILY_NET_LOSS_USDT;
+    this.maxMonthlyNetLossUsdt = config.MAX_MONTHLY_NET_LOSS_USDT;
     this.minRiskRewardRatio = config.PRE_TRADE_MIN_RISK_REWARD_RATIO;
   }
 
@@ -111,7 +113,7 @@ class RiskManager {
       return new Date(closedAt).toDateString() === today;
     });
 
-    let totalLoss = 0;
+    let netPnl = 0;
     todayTrades.forEach((t) => {
       const pnl = Number(
         t.profitLoss ??
@@ -120,17 +122,19 @@ class RiskManager {
         t.pnl ??
         0
       );
-      if (Number.isFinite(pnl) && pnl < 0) {
-        totalLoss += Math.abs(pnl);
-      }
+      if (Number.isFinite(pnl)) netPnl += pnl;
     });
 
-    const lossPercent = totalLoss / this.accountBaseUsdt * 100;
-    const passed = lossPercent < this.maxDailyLoss;
+    const netLossUsdt = Math.max(0, -netPnl);
+    const lossPercent = netLossUsdt / this.accountBaseUsdt * 100;
+    const passed = netLossUsdt < this.maxDailyNetLossUsdt;
 
     return {
       passed,
       lossPercent: lossPercent.toFixed(2),
+      netPnlUsdt: Number(netPnl.toFixed(8)),
+      netLossUsdt: Number(netLossUsdt.toFixed(8)),
+      maxNetLossUsdt: this.maxDailyNetLossUsdt,
       max: this.maxDailyLoss
     };
   }
@@ -145,7 +149,7 @@ class RiskManager {
       return new Date(closedAt) >= monthStart;
     });
 
-    let totalLoss = 0;
+    let netPnl = 0;
     monthTrades.forEach((t) => {
       const pnl = Number(
         t.profitLoss ??
@@ -154,17 +158,19 @@ class RiskManager {
         t.pnl ??
         0
       );
-      if (Number.isFinite(pnl) && pnl < 0) {
-        totalLoss += Math.abs(pnl);
-      }
+      if (Number.isFinite(pnl)) netPnl += pnl;
     });
 
-    const lossPercent = totalLoss / this.accountBaseUsdt * 100;
-    const passed = lossPercent < this.maxMonthlyLoss;
+    const netLossUsdt = Math.max(0, -netPnl);
+    const lossPercent = netLossUsdt / this.accountBaseUsdt * 100;
+    const passed = netLossUsdt < this.maxMonthlyNetLossUsdt;
 
     return {
       passed,
       lossPercent: lossPercent.toFixed(2),
+      netPnlUsdt: Number(netPnl.toFixed(8)),
+      netLossUsdt: Number(netLossUsdt.toFixed(8)),
+      maxNetLossUsdt: this.maxMonthlyNetLossUsdt,
       max: this.maxMonthlyLoss
     };
   }

@@ -339,7 +339,10 @@ ${typeEmoji} Tip: <code>${triggerType}</code>
       ETH_TREND_DATA_UNAVAILABLE: 'ETH trend verisi yetersiz.',
       BTC_SIMILARITY_DATA_UNAVAILABLE: 'BTC benzerlik verisi yetersiz.',
       ETH_SIMILARITY_DATA_UNAVAILABLE: 'ETH benzerlik verisi yetersiz.',
-      TOP_COINS_FETCH_FAILED: 'Coin listesi alınamadı.'
+      TOP_COINS_FETCH_FAILED: 'Coin listesi alınamadı.',
+      BTC_EMA50_200_TRANSITION_LOCK: 'BTC EMA50/EMA200 geçiş kilidi aktif olduğu için tarama atlandı.',
+      MARKET_TREND_DATA_UNAVAILABLE: 'Ağırlıklı piyasa trendi için gerekli veri alınamadı.',
+      WEIGHTED_MARKET_TREND_SIDEWAYS: 'Ağırlıklı piyasa trendi yatay kaldığı için tarama atlandı.'
     };
 
     const readableReason = reasonMap[reasonCode] || 'Tarama güvenli şekilde atlandı.';

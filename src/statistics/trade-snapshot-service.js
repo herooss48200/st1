@@ -48,32 +48,25 @@ class TradeSnapshotService {
     return normalized;
   }
 
-  recordEntry(snapshot) {
+  async recordEntry(snapshot) {
     try {
       const normalizedSnapshot = this.normalizeTelemetryPatch(snapshot);
-      this.repository.create({
+      const created = await this.repository.create({
         ...normalizedSnapshot,
         btcTrend: normalizedSnapshot.btcTrend || null,
         ethTrend: normalizedSnapshot.ethTrend || null,
         similarityScore: normalizedSnapshot.similarityScore ?? null,
         entryReason: normalizedSnapshot.entryReason || null
-      }).then((created) => {
-        if (created?.id) {
-          this.snapshotIndex.set(snapshot.tradeId, created.id);
-        }
-      }).catch((error) => {
-        logger.warning('Trade snapshot entry record failed', {
-          tradeId: snapshot?.tradeId,
-          symbol: snapshot?.symbol,
-          error: error.message
-        });
       });
+      if (created?.id) this.snapshotIndex.set(snapshot.tradeId, created.id);
+      return created || null;
     } catch (error) {
       logger.warning('Trade snapshot entry record failed', {
         tradeId: snapshot?.tradeId,
         symbol: snapshot?.symbol,
         error: error.message
       });
+      return null;
     }
   }
 

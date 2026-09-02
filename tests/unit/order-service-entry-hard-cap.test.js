@@ -16,6 +16,7 @@ describe('OrderService opening MARKET hard caps', () => {
     process.env.MAX_POSITIONS = '10';
     jest.spyOn(orderService, 'logTrace').mockImplementation(() => {});
     jest.spyOn(orderService, 'ensureOpeningPositionSettings').mockResolvedValue({ marginType: 'ISOLATED', leverage: 10 });
+    jest.spyOn(orderService, 'getFuturesAccountSnapshot').mockResolvedValue({ walletBalance: 148, availableBalance: 148 });
   });
 
   afterAll(() => {
@@ -63,5 +64,37 @@ describe('OrderService opening MARKET hard caps', () => {
     await expect(orderService.enforceOpeningMarketLimits({
       symbol: 'AAAUSDT', side: 'BUY', type: ORDER_TYPE.MARKET, quantity: 1, reduceOnly: false
     })).rejects.toThrow('MAX_POSITIONS_PER_COIN_HARD_CAP:AAAUSDT');
+  });
+
+  test('never exceeds the immutable 25-position live ceiling', async () => {
+    process.env.MAX_POSITIONS = '99';
+    jest.spyOn(orderService, 'getOpenPositions').mockResolvedValue(
+      Array.from({ length: 25 }, (_, i) => ({ symbol: `H${i}USDT`, notional: 50 }))
+    );
+
+    await expect(orderService.enforceOpeningMarketLimits({
+      symbol: 'NEWUSDT', side: 'BUY', type: ORDER_TYPE.MARKET, quantity: 1, reduceOnly: false
+    })).rejects.toThrow('MAX_POSITIONS_HARD_CAP:25/25');
+  });
+
+  test('rejects projected total notional above 1250 USDT', async () => {
+    jest.spyOn(orderService, 'getOpenPositions').mockResolvedValue([{ symbol: 'AAAUSDT', notional: 1220 }]);
+    jest.spyOn(orderService, 'getCurrentPrice').mockResolvedValue(10);
+    jest.spyOn(orderService, 'normalizeQuantity').mockImplementation(async (_symbol, qty) => qty);
+
+    await expect(orderService.enforceOpeningMarketLimits({
+      symbol: 'NEWUSDT', side: 'BUY', type: ORDER_TYPE.MARKET, quantity: 5, reduceOnly: false
+    })).rejects.toThrow('LIVE_TOTAL_NOTIONAL_HARD_CAP:1270/1250');
+  });
+
+  test('reserves 10 USDT free balance after required initial margin', async () => {
+    jest.spyOn(orderService, 'getOpenPositions').mockResolvedValue([]);
+    jest.spyOn(orderService, 'getCurrentPrice').mockResolvedValue(10);
+    jest.spyOn(orderService, 'normalizeQuantity').mockImplementation(async (_symbol, qty) => qty);
+    orderService.getFuturesAccountSnapshot.mockResolvedValue({ walletBalance: 148, availableBalance: 14.99 });
+
+    await expect(orderService.enforceOpeningMarketLimits({
+      symbol: 'NEWUSDT', side: 'BUY', type: ORDER_TYPE.MARKET, quantity: 5, reduceOnly: false
+    })).rejects.toThrow('LIVE_AVAILABLE_BALANCE_HARD_FLOOR:14.99/15');
   });
 });

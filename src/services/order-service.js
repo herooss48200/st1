@@ -476,7 +476,8 @@ class OrderService {
     }
 
     const openPositions = await this.getOpenPositions();
-    const maxPositions = Math.max(1, Number(process.env.MAX_POSITIONS || config.MAX_POSITIONS || 15));
+    const configuredMaxPositions = Math.max(1, Number(process.env.MAX_POSITIONS || config.MAX_POSITIONS || 15));
+    const maxPositions = Math.min(configuredMaxPositions, Number(config.LIVE_MAX_POSITIONS_HARD_CAP));
     if (openPositions.length >= maxPositions) {
       throw new Error(`MAX_POSITIONS_HARD_CAP:${openPositions.length}/${maxPositions}`);
     }
@@ -493,7 +494,8 @@ class OrderService {
       throw new Error(`ENTRY_HARD_CAP_PRICE_UNAVAILABLE:${order.symbol}`);
     }
 
-    const maxNotionalUsdt = Number(process.env.TRADE_SIZE_USDT || config.TRADE_SIZE_USDT || 100);
+    const configuredMaxNotionalUsdt = Number(process.env.TRADE_SIZE_USDT || config.TRADE_SIZE_USDT || 100);
+    const maxNotionalUsdt = Math.min(configuredMaxNotionalUsdt, Number(config.LIVE_MAX_TRADE_SIZE_USDT));
     if (!Number.isFinite(maxNotionalUsdt) || maxNotionalUsdt <= 0) {
       throw new Error('TRADE_SIZE_USDT_INVALID');
     }
@@ -517,6 +519,27 @@ class OrderService {
       throw new Error(`ENTRY_NOTIONAL_HARD_CAP_FAILED:${normalizedNotional}/${maxNotionalUsdt}`);
     }
 
+    const currentTotalNotional = openPositions.reduce((sum, position) => {
+      const notional = Number(position.notional ?? position.positionAmt * position.markPrice);
+      return sum + (Number.isFinite(notional) ? Math.abs(notional) : 0);
+    }, 0);
+    const projectedTotalNotional = currentTotalNotional + normalizedNotional;
+    if (projectedTotalNotional > Number(config.LIVE_MAX_TOTAL_NOTIONAL_USDT) + 1e-8) {
+      throw new Error(`LIVE_TOTAL_NOTIONAL_HARD_CAP:${projectedTotalNotional}/${config.LIVE_MAX_TOTAL_NOTIONAL_USDT}`);
+    }
+
+    const account = await this.getFuturesAccountSnapshot();
+    const availableBalance = Number(account?.availableBalance);
+    if (!Number.isFinite(availableBalance)) {
+      throw new Error('LIVE_AVAILABLE_BALANCE_UNAVAILABLE');
+    }
+    const leverage = Number(process.env.LEVERAGE || config.LEVERAGE || 10);
+    const requiredInitialMargin = normalizedNotional / leverage;
+    const requiredAvailableBalance = requiredInitialMargin + Number(config.LIVE_MIN_FREE_BALANCE_USDT);
+    if (availableBalance + 1e-8 < requiredAvailableBalance) {
+      throw new Error(`LIVE_AVAILABLE_BALANCE_HARD_FLOOR:${availableBalance}/${requiredAvailableBalance}`);
+    }
+
     logger.info('Opening MARKET notional ceiling enforced', {
       symbol: order.symbol,
       requestedQuantity,
@@ -524,7 +547,13 @@ class OrderService {
       currentPrice,
       requestedNotionalUsdt,
       finalNotionalUsdt: normalizedNotional,
-      configuredMaxNotionalUsdt: maxNotionalUsdt,
+      configuredMaxNotionalUsdt,
+      hardMaxNotionalUsdt: maxNotionalUsdt,
+      currentTotalNotional,
+      projectedTotalNotional,
+      availableBalance,
+      requiredInitialMargin,
+      reservedFreeBalanceUsdt: config.LIVE_MIN_FREE_BALANCE_USDT,
       riskReduced: normalizedNotional + 1e-8 < maxNotionalUsdt
     });
 

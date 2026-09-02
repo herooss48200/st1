@@ -1,6 +1,7 @@
 // Keep tests deterministic and isolated from developer or production .env files.
 process.env.NODE_ENV = 'test';
 process.env.APP_MODE = 'paper';
+process.env.ENABLE_REAL_TRADING = 'false';
 process.env.BINANCE_API_KEY = 'test-api-key';
 process.env.BINANCE_API_SECRET = 'test-api-secret';
 process.env.ENABLE_TELEGRAM = 'false';

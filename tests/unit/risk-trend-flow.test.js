@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
 
@@ -81,6 +82,74 @@ describe('Risk and Trend Flow Fixes', () => {
     jest.clearAllMocks();
     // These assertions intentionally cover the backwards-compatible legacy engine.
     config.POSITION_FOLLOW_MODE = 'LEGACY';
+  });
+
+  test('R41.5 Rescue Radar RED closes the matching managed side in LIVE', async () => {
+    const loop = new TradingLoop(
+      {
+        orderService: {
+          isLiveTradingEnabled: jest.fn(() => true),
+          getCurrentPrice: jest.fn(async () => 99)
+        },
+        marketBreadth: { current: null }
+      },
+      { similarity: {}, trend: {}, trigger: { period: 20 }, riskManager: {} }
+    );
+    const position = {
+      coin: 'LIVEUSDT', signal: 'BUY', ownership: 'BOT_CONFIRMED',
+      entryPrice: 100, lastMonitoredPrice: 99, quantity: 1
+    };
+    loop.activePositions.set(position.coin, position);
+    jest.spyOn(loop, 'closeManagedPositionAtMarket').mockResolvedValue({
+      closed: true,
+      notification: { coin: position.coin, signal: position.signal, netPnlForTradeSizeUsdt: -0.5 }
+    });
+    jest.spyOn(loop, 'recordClosedTrade').mockImplementation(() => {});
+    jest.spyOn(loop, 'notifyClosedPosition').mockResolvedValue(undefined);
+
+    const result = await loop.emergencyClosePositionsForRescueRadar({
+      emergencyExit: true,
+      riskSide: 'LONG',
+      reason: 'FAST_BTC_SHOCK_RED'
+    });
+
+    expect(result.triggered).toBe(true);
+    expect(result.closed).toEqual(['LIVEUSDT']);
+    expect(loop.activePositions.has('LIVEUSDT')).toBe(false);
+    expect(loop.closeManagedPositionAtMarket).toHaveBeenCalledWith(position, 99, 'ST1_RESCUE_RADAR');
+    expect(loop.st1RescueRadar.recoveryActive).toBe(true);
+  });
+
+  test('R41.5 daily loss history survives a process restart', () => {
+    const previousPath = config.ACCOUNTING_STATE_FILE;
+    const previousPersistence = process.env.ALLOW_TEST_ACCOUNTING_PERSISTENCE;
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'st1-risk-ledger-'));
+    config.ACCOUNTING_STATE_FILE = path.join(tempDir, 'accounting-state.json');
+    process.env.ALLOW_TEST_ACCOUNTING_PERSISTENCE = 'true';
+    const services = {
+      orderService: { isLiveTradingEnabled: jest.fn(() => false) },
+      marketBreadth: { current: null }
+    };
+    const engines = { similarity: {}, trend: {}, trigger: { period: 20 }, riskManager: {} };
+
+    try {
+      const first = new TradingLoop(services, engines);
+      first.recordClosedTrade({
+        coin: 'LOSSUSDT',
+        closedAt: Date.now(),
+        netPnlForTradeSizeUsdt: -7.5
+      });
+
+      const restarted = new TradingLoop(services, engines);
+      expect(restarted.riskTradeHistory).toHaveLength(1);
+      expect(restarted.riskTradeHistory[0].profitLoss).toBe(-7.5);
+      expect(new RiskManager().checkDailyLoss(restarted.riskTradeHistory).passed).toBe(false);
+    } finally {
+      config.ACCOUNTING_STATE_FILE = previousPath;
+      if (previousPersistence == null) delete process.env.ALLOW_TEST_ACCOUNTING_PERSISTENCE;
+      else process.env.ALLOW_TEST_ACCOUNTING_PERSISTENCE = previousPersistence;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test('does not use Math.random and accepts valid position deterministically', async () => {
@@ -426,7 +495,9 @@ describe('Risk and Trend Flow Fixes', () => {
 
     const manager = new RiskManager();
     const dailyLoss = manager.checkDailyLoss(loop.riskTradeHistory);
-    expect(dailyLoss.lossPercent).toBe('2.50');
+    expect(dailyLoss.lossPercent).toBe('168.92');
+    expect(dailyLoss.netLossUsdt).toBe(250);
+    expect(dailyLoss.passed).toBe(false);
   });
 
   test('monitor lifecycle continues even when similarity data is missing in strategy cycle', async () => {

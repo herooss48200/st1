@@ -82,6 +82,28 @@ class RiskManager {
     }
   }
 
+  async validateEntrySafety(position, currentPositions, tradingHistory, options = {}) {
+    const checks = {
+      positionCount: this.checkPositionCount(currentPositions),
+      coinConcentration: this.checkCoinConcentration(position.coin, currentPositions),
+      dailyLoss: this.checkDailyLoss(tradingHistory),
+      monthlyLoss: this.checkMonthlyLoss(tradingHistory),
+      dailyActivity: this.checkDailyActivity(tradingHistory, options)
+    };
+    const approved = Object.values(checks).every((check) => check.passed);
+    logger.info('Operational entry safety validation', {
+      positionId: position.id,
+      approved,
+      checks,
+      strategyFiltersExcluded: ['riskReward']
+    });
+    return {
+      approved,
+      checks,
+      reason: approved ? 'Operational safety checks passed' : this.getFailureReason(checks)
+    };
+  }
+
   checkPositionCount(currentPositions) {
     const count = currentPositions.length;
     const unlimitedPaper = String(process.env.APP_MODE || config.APP_MODE || 'paper').toLowerCase() === 'paper'

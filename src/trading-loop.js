@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { classifyEconomicOutcome, selectFilledProtectiveOrder } from './utils/close-truth.js';
 import St1RescueRadar from './services/st1-rescue-radar.js';
+import { analyzeSimpleSt1RenkoSetup, hasCrossedEntryTarget } from './engines/st1-renko-entry-engine.js';
 
 const STRATEGY_CANDLE_INTERVAL_MS = config.STRATEGY_CANDLE_INTERVAL_MS;
 const BTC_SYMBOL = config.BTC_SYMBOL;
@@ -112,6 +113,9 @@ export class TradingLoop {
     this.entryFunnelWindow = this.createEntryFunnelWindow();
 
     this.ambushList = new Map();
+    this.simpleRenkoUniverse = [];
+    this.st1RenkoAnalysisCache = new Map();
+    this.st1RenkoLastExecutedSetupCloseTimes = new Map();
     this.activePositions = new Map();
     this.tradeStats = {
       total: 0,
@@ -521,6 +525,254 @@ export class TradingLoop {
     ambush.st1LastFilterReason = null;
   }
 
+  getSimpleRenkoOptions() {
+    return {
+      sourceInterval: config.ST1_RENKO_SOURCE_INTERVAL,
+      atrPeriod: config.ST1_RENKO_ATR_PERIOD,
+      bollingerPeriod: config.ST1_RENKO_BOLLINGER_PERIOD,
+      bollingerStdDev: config.ST1_RENKO_BOLLINGER_STD_DEV,
+      rsiPeriod: config.ST1_RENKO_RSI_PERIOD,
+      rsiMaximum: config.ST1_RENKO_RSI_OVERSOLD,
+      rsiMinimum: config.ST1_RENKO_RSI_OVERBOUGHT,
+      bandToleranceT: config.ST1_RENKO_BB_TOUCH_TOLERANCE_T,
+      entryOffsetT: config.ST1_RENKO_ENTRY_OFFSET_T,
+      maxBricks: config.ST1_RENKO_MAX_BRICKS
+    };
+  }
+
+  async refreshSimpleRenkoUniverse(now = Date.now()) {
+    const refreshIntervalMs = this.resolveAmbushRefreshIntervalMs();
+    if (this.lastAmbushRefreshAt !== null && now - this.lastAmbushRefreshAt < refreshIntervalMs) {
+      return;
+    }
+
+    const targetCoins = this.resolveTopCoinTargetCount();
+    let topCoinsData;
+    try {
+      topCoinsData = await this.marketData.getTop100Coins(targetCoins);
+    } catch (error) {
+      logger.warn('ST1 simple Renko universe refresh failed; current universe preserved', {
+        error: error.message,
+        targetCoins
+      });
+      await this.notifyAmbushScanResult(this.buildAmbushScanResult({
+        strategy: 'ST1_SIMPLE_RENKO',
+        status: 'FAILED',
+        reason: 'TOP_COINS_FETCH_FAILED',
+        targetCoins,
+        fetchedCoins: 0,
+        scannedCoins: 0,
+        qualifiedAmbushes: this.ambushList.size,
+        ambushCount: this.ambushList.size
+      }));
+      return;
+    }
+
+    const symbols = (Array.isArray(topCoinsData) ? topCoinsData : [])
+      .slice(0, targetCoins)
+      .map((coin) => String(coin?.symbol || '').trim().toUpperCase())
+      .filter((symbol) => symbol && !this.isEntrySymbolExcluded(symbol));
+    const symbolSet = new Set(symbols);
+    this.simpleRenkoUniverse = symbols;
+    this.st1RenkoAnalysisCache = new Map(
+      [...this.st1RenkoAnalysisCache].filter(([coin]) => symbolSet.has(coin))
+    );
+    this.ambushList = new Map(
+      [...this.ambushList].filter(([coin]) => symbolSet.has(coin))
+    );
+    this.lastAmbushRefreshAt = now;
+    const directions = this.getAmbushDirectionCounts();
+    logger.info('ST1 simple Renko universe refreshed', {
+      targetCoins,
+      fetchedCoins: symbols.length,
+      strategy: '15M_RENKO_RSI_BOLLINGER_0_25T',
+      entryGates: 'NONE_BEYOND_SIGNAL_AND_OPERATIONAL_SAFETY'
+    });
+    await this.notifyAmbushScanResult(this.buildAmbushScanResult({
+      strategy: 'ST1_SIMPLE_RENKO',
+      status: 'COMPLETED',
+      reason: 'ST1_SIMPLE_RENKO_UNIVERSE',
+      targetCoins,
+      fetchedCoins: symbols.length,
+      scannedCoins: symbols.length,
+      qualifiedAmbushes: this.ambushList.size,
+      threshold: null,
+      btcTrend: null,
+      ethTrend: null,
+      ambushCount: this.ambushList.size,
+      longCount: directions.longCount,
+      shortCount: directions.shortCount,
+      breadth15m: null
+    }));
+  }
+
+  async runSimpleRenkoEntryCycle(notificationSummary, now, maxPositions) {
+    const options = this.getSimpleRenkoOptions();
+    const candleLimit = Number(config.ST1_RENKO_CANDLE_LIMIT);
+
+    for (const coin of this.simpleRenkoUniverse) {
+      if (this.activePositions.has(coin)) continue;
+      if (Number.isFinite(maxPositions) && this.activePositions.size >= maxPositions) break;
+
+      let ambush = this.ambushList.get(coin) || null;
+
+      let candles;
+      try {
+        candles = this.historicalCandleCache
+          ? await this.historicalCandleCache.getOrFetchCandles(coin, options.sourceInterval, candleLimit)
+          : await this.marketData.getKlines(coin, options.sourceInterval, candleLimit);
+      } catch (error) {
+        logger.warn('ST1 simple Renko 15m candles unavailable', { coin, error: error.message });
+        continue;
+      }
+
+      const latestClosedCandle = [...candles].reverse().find((candle) => {
+        const closeTime = Number(candle?.closeTime);
+        return Number.isFinite(closeTime) && closeTime <= now;
+      });
+      const analysisCacheKey = latestClosedCandle
+        ? `${latestClosedCandle.closeTime}:${latestClosedCandle.close}:${candles.length}`
+        : null;
+      const cachedAnalysis = this.st1RenkoAnalysisCache.get(coin);
+      const setup = analysisCacheKey && cachedAnalysis?.key === analysisCacheKey
+        ? cachedAnalysis.setup
+        : analyzeSimpleSt1RenkoSetup(candles, now, options);
+      if (analysisCacheKey && cachedAnalysis?.key !== analysisCacheKey) {
+        this.st1RenkoAnalysisCache.set(coin, { key: analysisCacheKey, setup });
+      }
+      if (!setup.triggered) {
+        if (ambush) this.ambushList.delete(coin);
+        continue;
+      }
+
+      if (Number(setup.setupCloseTime) <= Number(this.st1RenkoLastExecutedSetupCloseTimes.get(coin) || 0)) {
+        continue;
+      }
+
+      if (ambush?.st1Setup?.setupSignature !== setup.setupSignature) {
+        ambush = {
+          coin,
+          similarity: null,
+          addedAt: now,
+          triggered: false,
+          ready: true,
+          readyAt: now,
+          readyReason: setup.reason,
+          readyRegime: 'ST1_SIMPLE_15M_RENKO_RSI_BB_0_25T',
+          expectedSignal: setup.signal,
+          direction: setup.signal,
+          scanReason: 'ST1_SIMPLE_RENKO_SIGNAL',
+          scanOnly: false,
+          st1Setup: setup,
+          st1LastFilterReason: null
+        };
+        this.ambushList.set(coin, ambush);
+        this.markEntryFunnelStage(setup.signal, 'setup', coin);
+        logger.info('ST1 simple Renko pusu armed', {
+          coin,
+          signal: setup.signal,
+          brickColor: setup.brick.color,
+          rsi: setup.rsi,
+          boxSize: setup.boxSize,
+          bollingerLower: setup.bollinger.lower,
+          bollingerUpper: setup.bollinger.upper,
+          brickHigh: setup.brick.high,
+          brickLow: setup.brick.low,
+          entryOffsetT: setup.entryOffsetT,
+          targetPrice: setup.targetPrice
+        });
+      }
+
+      let currentPrice;
+      try {
+        currentPrice = Number(await this.orderService.getCurrentPrice(coin));
+      } catch (error) {
+        logger.warn('ST1 simple Renko live price unavailable', { coin, error: error.message });
+        continue;
+      }
+      if (!Number.isFinite(currentPrice) || currentPrice <= 0) continue;
+
+      if (!hasCrossedEntryTarget(setup, currentPrice)) continue;
+
+      this.markEntryFunnelStage(setup.signal, 'bodyBreak', coin);
+      const confirmation = {
+        confirmed: true,
+        reason: setup.signal === 'BUY'
+          ? 'ST1_RED_RENKO_HIGH_PLUS_0_25T_CROSSED'
+          : 'ST1_GREEN_RENKO_LOW_MINUS_0_25T_CROSSED',
+        features: {
+          st1SimpleRenko: true,
+          sourceInterval: options.sourceInterval,
+          brickColor: setup.brick.color,
+          brickHigh: setup.brick.high,
+          brickLow: setup.brick.low,
+          boxSize: setup.boxSize,
+          rsi: setup.rsi,
+          bollingerLower: setup.bollinger.lower,
+          bollingerUpper: setup.bollinger.upper,
+          entryOffsetT: setup.entryOffsetT,
+          targetPrice: setup.targetPrice,
+          currentPrice
+        }
+      };
+
+      const entry = await this.enterPosition(
+        coin,
+        currentPrice,
+        setup.signal,
+        candles,
+        null,
+        null,
+        confirmation
+      );
+      if (!entry) continue;
+
+      this.markEntryFunnelStage(setup.signal, 'opened', coin);
+      this.st1RenkoLastExecutedSetupCloseTimes.set(coin, setup.setupCloseTime);
+      this.ambushList.delete(coin);
+      this.activePositions.set(coin, entry.position);
+      this.tradeStats.openedTotal += 1;
+      this.sessionStats.openedTotal += 1;
+      this.persistAccountingState();
+      notificationSummary.opened.push(entry.notification);
+      await NotificationService.sendEntry(
+        entry.notification.coin,
+        entry.notification.entryPrice,
+        entry.notification.quantity,
+        entry.notification.tp,
+        entry.notification.sl,
+        {
+          signal: entry.notification.signal,
+          mode: process.env.APP_MODE || 'paper',
+          notionalUsdt: entry.position.executedNotionalUsdt ?? entry.position.tradeSizeUsdt,
+          leverage: entry.notification.leverage
+        }
+      );
+    }
+
+    if (notificationSummary.opened.length > 0 || notificationSummary.closed.length > 0) {
+      const accounting = await this.getAccountingSnapshot();
+      await NotificationService.sendTradeSummary({
+        opened: notificationSummary.opened,
+        closed: notificationSummary.closed,
+        recentClosed: notificationSummary.closed.length > 0
+          ? notificationSummary.closed
+          : this.closedTradeHistory.slice(0, 3),
+        ambushCount: this.ambushList.size,
+        openPositionCount: this.activePositions.size,
+        stats: this.tradeStats,
+        wallet: accounting,
+        commission: this.totalCommissionUsdt,
+        mode: process.env.APP_MODE || 'paper',
+        maxPositions,
+        unlimitedPositions: this.isUnlimitedPaperPositions(),
+        ambushDirection: this.getAmbushDirectionCounts(),
+        positionDirection: this.getPositionDirectionCounts(),
+        session: this.getSessionStatsSnapshot()
+      });
+    }
+  }
+
   resolveIntervalMs(interval) {
     const match = String(interval || '').trim().toLowerCase().match(/^(\d+)(m|h|d)$/);
     if (!match) return null;
@@ -762,6 +1014,7 @@ export class TradingLoop {
   buildAmbushScanResult(payload = {}) {
     const direction = this.getAmbushDirectionCounts();
     return {
+      strategy: payload.strategy || null,
       status: payload.status || 'FAILED',
       reason: payload.reason || null,
       targetCoins: Number.isFinite(payload.targetCoins) ? payload.targetCoins : this.resolveTopCoinTargetCount(),
@@ -833,16 +1086,25 @@ export class TradingLoop {
       positionMonitorIntervalMs,
       maxPositions: Number.isFinite(maxPositions) ? maxPositions : 'SINIRSIZ_PAPER',
       topCoins: topCoinLimit,
-      similarityInterval
+      similarityInterval,
+      strategy: config.ST1_SIMPLE_RENKO_ENTRY_ENABLED
+        ? '15M_RENKO_RSI_BOLLINGER_0_25T_LONG_SHORT'
+        : 'LEGACY_ST1'
     });
 
     const modeLabel = (process.env.APP_MODE || 'paper').toLowerCase() === 'live' ? 'LIVE_TRADING' : 'PAPER_TRADING';
     await NotificationService.sendMessage(
       'Trading Loop Active (24/7)\n' +
-      `Mode: ${modeLabel}\nStrategy scan: 15m candle closes + ${this.resolveStrategyCandleCloseDelayMs() / 1000}s`
+      `Mode: ${modeLabel}\n` +
+      (config.ST1_SIMPLE_RENKO_ENTRY_ENABLED
+        ? 'Strategy: 15m Renko | LONG RSI<30 / SHORT RSI>70 | BB + 0.25T'
+        : `Strategy scan: 15m candle closes + ${this.resolveStrategyCandleCloseDelayMs() / 1000}s`)
     );
 
     await this.syncLiveOpenPositionsOnStart(Number.isFinite(maxPositions) ? maxPositions : DEFAULT_MAX_POSITIONS);
+    if (config.ST1_SIMPLE_RENKO_ENTRY_ENABLED === true) {
+      await this.refreshSimpleRenkoUniverse(Date.now());
+    }
     this.scheduleNextStrategyCycle();
     this.scheduleNextAmbushMonitorCycle(0);
 
@@ -889,6 +1151,10 @@ export class TradingLoop {
     this.isStrategyCycleRunning = true;
     try {
       const now = Date.now();
+      if (config.ST1_SIMPLE_RENKO_ENTRY_ENABLED === true) {
+        await this.refreshSimpleRenkoUniverse(now);
+        return;
+      }
       const similarityInterval = process.env.SIMILARITY_INTERVAL || DEFAULT_SIMILARITY_INTERVAL;
       const btcTrendInterval = process.env.BTC_TREND_INTERVAL || config.BTC_TREND_INTERVAL;
       const trendRequiredCandles = Math.max(
@@ -1298,6 +1564,10 @@ export class TradingLoop {
       const notificationSummary = { opened: [], closed: [] };
       const now = Date.now();
       const maxPositions = this.resolveMaxPositions();
+      if (config.ST1_SIMPLE_RENKO_ENTRY_ENABLED === true) {
+        await this.runSimpleRenkoEntryCycle(notificationSummary, now, maxPositions);
+        return;
+      }
       const readyTriggerInterval = process.env.READY_BOLLINGER_INTERVAL || DEFAULT_READY_TRIGGER_INTERVAL;
       const ambushTimeoutMinutes = parseInt(
         process.env.AMBUSH_TIMEOUT_MINUTES || String(DEFAULT_AMBUSH_TIMEOUT_MINUTES),
@@ -2439,34 +2709,55 @@ export class TradingLoop {
         return null;
       }
 
-      if (this.st1RescueRadar?.recoveryActive && this.st1RescueRadar.isEntryBlocked(signal)) {
+      const simpleRenkoEntry = config.ST1_SIMPLE_RENKO_ENTRY_ENABLED === true;
+
+      if (!simpleRenkoEntry && this.st1RescueRadar?.recoveryActive && this.st1RescueRadar.isEntryBlocked(signal)) {
         this.markEntryFunnelRejection(signal, coin, 'RESCUE_RECOVERY_ENTRY_LOCK');
         logger.warn('Position entry rejected by ST1 Rescue Radar recovery lock', { coin, signal, riskSide: this.st1RescueRadar.recoverySide });
         return null;
       }
 
-      const entryTrendGuard = await this.validateEntryTrend(signal);
-      if (!entryTrendGuard.allowed) {
-        this.markEntryFunnelRejection(signal, coin, entryTrendGuard.reason || 'BTC_ETH_TREND_GUARD');
-        logger.warn('Position entry rejected by final BTC/ETH trend guard', {
-          coin,
-          signal,
-          reason: entryTrendGuard.reason,
-          currentDirection: entryTrendGuard.direction,
-          btcTrend: entryTrendGuard.btcTrend,
-          ethTrend: entryTrendGuard.ethTrend
-        });
-        return null;
+      let entryTrendGuard = {
+        allowed: true,
+        reason: 'ST1_SIMPLE_RENKO_TREND_GATE_REMOVED',
+        direction: signal,
+        btcTrend: null,
+        ethTrend: null
+      };
+      if (!simpleRenkoEntry) {
+        entryTrendGuard = await this.validateEntryTrend(signal);
+        if (!entryTrendGuard.allowed) {
+          this.markEntryFunnelRejection(signal, coin, entryTrendGuard.reason || 'BTC_ETH_TREND_GUARD');
+          logger.warn('Position entry rejected by final BTC/ETH trend guard', {
+            coin,
+            signal,
+            reason: entryTrendGuard.reason,
+            currentDirection: entryTrendGuard.direction,
+            btcTrend: entryTrendGuard.btcTrend,
+            ethTrend: entryTrendGuard.ethTrend
+          });
+          return null;
+        }
+        this.markEntryFunnelStage(signal, 'trendGuard', coin);
       }
-      this.markEntryFunnelStage(signal, 'trendGuard', coin);
 
-      const regimePolicy = this.evaluateSelectiveRegimePolicy(signal, entryTrendGuard, marketBreadth);
-      if (!regimePolicy.allowed) {
-        this.markEntryFunnelRejection(signal, coin, regimePolicy.reason || 'BREADTH_POLICY');
-        logger.warn('Position entry rejected by market breadth policy', { coin, signal, ...regimePolicy });
-        return null;
+      let regimePolicy = {
+        allowed: true,
+        reason: 'ST1_SIMPLE_RENKO_BREADTH_GATE_REMOVED',
+        verdict: 'NOT_USED',
+        breadthState: 'NOT_USED',
+        expectedBreadth: null,
+        targetRiskUsdt: Number(config.RISK_PER_TRADE_USDT)
+      };
+      if (!simpleRenkoEntry) {
+        regimePolicy = this.evaluateSelectiveRegimePolicy(signal, entryTrendGuard, marketBreadth);
+        if (!regimePolicy.allowed) {
+          this.markEntryFunnelRejection(signal, coin, regimePolicy.reason || 'BREADTH_POLICY');
+          logger.warn('Position entry rejected by market breadth policy', { coin, signal, ...regimePolicy });
+          return null;
+        }
+        this.markEntryFunnelStage(signal, 'breadth', coin);
       }
-      this.markEntryFunnelStage(signal, 'breadth', coin);
 
       let planningCandles = recentCandles;
       if (this.isDelayedProtectionMode()) {
@@ -2548,7 +2839,7 @@ export class TradingLoop {
 
       const indicativeProtection = this.calculateProtectionPricesFromStop(price, signal, tpPercent, indicativeStopPrice);
       const netAdvantage = this.evaluateNetAdvantage(price, indicativeProtection.takeProfitPrice, tradeSizeUsdt);
-      if (!netAdvantage.passed) {
+      if (!simpleRenkoEntry && !netAdvantage.passed) {
         logger.warn('Position entry rejected because estimated costs consume the advantage', {
           coin,
           signal,
@@ -2558,7 +2849,24 @@ export class TradingLoop {
       }
 
       const estimatedCostsPerUnit = netAdvantage.estimatedCostsUsdt / Math.max(quantity, EPSILON);
-      const finalRiskCheck = await this.riskManager.validateTrade(
+      const finalRiskCheck = await (simpleRenkoEntry && typeof this.riskManager.validateEntrySafety === 'function'
+        ? this.riskManager.validateEntrySafety(
+          {
+            id: `FINAL_${coin}_${Date.now()}`,
+            coin,
+            signal,
+            entryPrice: Number(price),
+            stopLoss: indicativeStopPrice,
+            takeProfit: indicativeProtection.takeProfitPrice
+          },
+          Array.from(this.activePositions.values()),
+          this.riskTradeHistory,
+          {
+            projectedCommissionUsdt: tradeSizeUsdt * this.commissionRate * 2,
+            projectedTurnoverUsdt: tradeSizeUsdt * 2
+          }
+        )
+        : this.riskManager.validateTrade(
         {
           id: `FINAL_${coin}_${Date.now()}`,
           coin,
@@ -2575,7 +2883,7 @@ export class TradingLoop {
           projectedCommissionUsdt: tradeSizeUsdt * this.commissionRate * 2,
           projectedTurnoverUsdt: tradeSizeUsdt * 2
         }
-      );
+      ));
       if (!finalRiskCheck.approved) {
         this.markEntryFunnelRejection(signal, coin, finalRiskCheck.reason || 'FINAL_RISK_CHECK');
         logger.warn('Position entry rejected by final risk check', {
@@ -2588,10 +2896,8 @@ export class TradingLoop {
       }
       this.markEntryFunnelStage(signal, 'risk', coin);
 
-      // ST1 is a reversal/transition strategy. BTC 15m SuperTrend is telemetry only:
-      // it remains visible in the rescue radar but is never an entry authority.
-      // Final directional authority stays with the fresh BTC/ETH EMA regime guard plus
-      // the coin EMA50/EMA200 + coin SuperTrend direction gate above.
+      // R42 simple Renko mode reaches this point only through its RSI/BB/0.25T signal
+      // plus operational risk limits. Legacy mode keeps its historical gates above.
 
       const orderResult = await this.orderService.placeOrder({
         symbol: coin,

@@ -1,10 +1,17 @@
-# ST1 R41.0
+# ST1 R42 — Basit 15m Renko + RSI
 
-Bu proje, doğrulanmış çalışan R40.3 kod ağacı teknik baz alınarak ST1 stratejisi olarak geliştirilmiştir. Proje kimliği bundan sonra ST1'dir.
+ST1'in aktif giriş mantığı kapanmış 15 dakikalık mumlardan üretilen Renko tuğlalarına dayanır. `T`, ilgili coinin 15m ATR(14) değerinden hesaplanan Renko tuğla boyudur.
 
-ST1 aktifken giriş sırası:
+## Giriş kuralları
 
-`pusu havuzu -> 15m BB setup -> sonraki 15m renk teyidi -> 1/2/3 mum canlı gövde kırılımı -> coin EMA50/200 -> coin SuperTrend -> breadth/risk -> strict BTC15 SuperTrend -> Binance emir`
+- LONG pusu: son kapanan Renko tuğlası kırmızı, tuğlanın Renko RSI(14) değeri kesinlikle `30'dan küçük` ve tuğla alt Bollinger bandına değmiş/geçmiş veya en fazla `0.25T` yaklaşmış olmalıdır.
+- LONG emir: canlı fiyat bu kırmızı tuğlanın en yüksek fiyatını `0.25T` eklenmiş seviyenin kesinlikle üzerine geçince açılır.
+- SHORT pusu: son kapanan Renko tuğlası yeşil, tuğlanın Renko RSI(14) değeri kesinlikle `70'ten büyük` ve tuğla üst Bollinger bandına değmiş/geçmiş veya en fazla `0.25T` yaklaşmış olmalıdır.
+- SHORT emir: canlı fiyat bu yeşil tuğlanın en düşük fiyatından `0.25T` çıkarılmış seviyenin kesinlikle altına geçince açılır.
+
+`RSI = 30`, `RSI = 70` veya canlı fiyatın tam tetik seviyesine eşit olması giriş için yeterli değildir.
+
+BTC/ETH trendi, benzerlik, breadth, EMA, SuperTrend, mum rengi teyidi, formasyon, 1 dakikalık teyit, minimum risk/getiri ve net avantaj kontrolleri R42 giriş yolunda kullanılmaz. Geçerli veri, hariç tutulan sembol, aynı coinde açık pozisyon, pozisyon boyutlandırma ve hesap güvenlik limitleri korunur.
 
 ## Paper / ileride ilk canlı deneme limitleri
 
@@ -13,13 +20,10 @@ ST1 aktifken giriş sırası:
 - Maksimum pozisyon notional: 50 USDT
 - PAPER maksimum eşzamanlı pozisyon: sınır yok (aynı coinde en fazla 1 pozisyon)
 - İleride LIVE güvenlik sınırı: 5 eşzamanlı pozisyon
-- Breadth uyumlu hedef risk: 0.75 USDT
-- Breadth NEUTRAL hedef risk: 0.40 USDT
-- Breadth ters hedef risk: 0.25 USDT
-- BTC EMA50/200 rejimi ve %0.15 geçiş kilidi korunur.
+- Hedef işlem riski: 0.75 USDT
 - Tarama evreni: hacme göre ilk 300 coin (`TOP_COINS_COUNT=300`).
 
-Detay: `R41.0-ST1-NOTES.md`.
+Detay: `R42-ST1-SIMPLE-RENKO-NOTES.md`.
 
 ## Şimdiki çalışma modu
 

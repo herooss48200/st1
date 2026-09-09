@@ -289,6 +289,7 @@ ${typeEmoji} Tip: <code>${triggerType}</code>
   }
 
   async sendAmbushSummary(summary = {}) {
+    const simpleRenko = summary.strategy === 'ST1_SIMPLE_RENKO';
     const similarityInterval = summary.similarityInterval || '4h';
     const refreshIntervalMinutes = Number.isFinite(summary.refreshIntervalMinutes) ? summary.refreshIntervalMinutes : 30;
     const status = (summary.status || 'COMPLETED').toUpperCase();
@@ -348,7 +349,31 @@ ${typeEmoji} Tip: <code>${triggerType}</code>
     const readableReason = reasonMap[reasonCode] || 'Tarama güvenli şekilde atlandı.';
 
     let text;
-    if (status === 'SKIPPED') {
+    if (simpleRenko && status === 'COMPLETED') {
+      text = `
+🧱 <b>ST1 Renko Pusu Taraması</b>
+━━━━━━━━━━━━━━━━━━━━
+🕐 Saat: ${new Date().toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}
+⏱️ Kaynak: <code>kapanmış 15m mumlardan Renko</code>
+🟢 Long: <code>kırmızı tuğla + RSI &lt; 30 + alt BB</code>
+🔴 Short: <code>yeşil tuğla + RSI &gt; 70 + üst BB</code>
+🎯 Tetik: <code>Long high + 0.25T / Short low - 0.25T</code>
+📚 Hedef Coin: <code>${targetCoins}</code>
+📥 Alınan Coin: <code>${fetchedCoins}</code>
+✅ Taranan Coin: <code>${scannedCoins}</code>
+🎯 Toplam Pusu: <code>${qualifiedAmbushes}</code>
+🟢 Long Pusu: <code>${longCount}</code> | 🔴 Short Pusu: <code>${shortCount}</code>
+      `;
+    } else if (simpleRenko && status === 'FAILED') {
+      text = `
+⚠️ <b>ST1 Renko Taraması Başarısız</b>
+━━━━━━━━━━━━━━━━━━━━
+🕐 Saat: ${new Date().toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}
+📌 Neden: <code>${readableReason}</code>
+📚 Hedef Coin: <code>${targetCoins}</code>
+📥 Alınan Coin: <code>${fetchedCoins}</code>
+      `;
+    } else if (status === 'SKIPPED') {
       text = `
 ⏭️ <b>Pusu Taraması Atlandı</b>
 ━━━━━━━━━━━━━━━━━━━━

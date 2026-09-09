@@ -217,7 +217,7 @@ class Config {
     this.AMBUSH_REFRESH_INTERVAL_MINUTES = Number.isFinite(parsedAmbushRefreshIntervalMinutes)
       ? parsedAmbushRefreshIntervalMinutes
       : 15;
-    this.AMBUSH_MONITOR_INTERVAL_MS = integer('AMBUSH_MONITOR_INTERVAL_MS', 60000);
+    this.AMBUSH_MONITOR_INTERVAL_MS = integer('AMBUSH_MONITOR_INTERVAL_MS', 5000);
     const parsedPositionMonitorIntervalMs = parseInt(process.env.POSITION_MONITOR_INTERVAL_MS, 10);
     this.POSITION_MONITOR_INTERVAL_MS = Number.isFinite(parsedPositionMonitorIntervalMs)
       ? parsedPositionMonitorIntervalMs
@@ -230,6 +230,18 @@ class Config {
     this.BOLLINGER_STD_DEV = parseFloat(process.env.BOLLINGER_STD_DEV) || 2;
     this.BOLLINGER_SOURCE = process.env.BOLLINGER_SOURCE || 'close';
     this.ST1_ENTRY_ENGINE_ENABLED = boolean('ST1_ENTRY_ENGINE_ENABLED', true);
+    this.ST1_SIMPLE_RENKO_ENTRY_ENABLED = boolean('ST1_SIMPLE_RENKO_ENTRY_ENABLED', true);
+    this.ST1_RENKO_SOURCE_INTERVAL = String(process.env.ST1_RENKO_SOURCE_INTERVAL || '15m').trim();
+    this.ST1_RENKO_CANDLE_LIMIT = integer('ST1_RENKO_CANDLE_LIMIT', 800);
+    this.ST1_RENKO_MAX_BRICKS = integer('ST1_RENKO_MAX_BRICKS', 256);
+    this.ST1_RENKO_ATR_PERIOD = integer('ST1_RENKO_ATR_PERIOD', 14);
+    this.ST1_RENKO_BOLLINGER_PERIOD = integer('ST1_RENKO_BOLLINGER_PERIOD', 20);
+    this.ST1_RENKO_BOLLINGER_STD_DEV = number('ST1_RENKO_BOLLINGER_STD_DEV', 2);
+    this.ST1_RENKO_BB_TOUCH_TOLERANCE_T = number('ST1_RENKO_BB_TOUCH_TOLERANCE_T', 0.25);
+    this.ST1_RENKO_RSI_PERIOD = integer('ST1_RENKO_RSI_PERIOD', 14);
+    this.ST1_RENKO_RSI_OVERSOLD = number('ST1_RENKO_RSI_OVERSOLD', 30);
+    this.ST1_RENKO_RSI_OVERBOUGHT = number('ST1_RENKO_RSI_OVERBOUGHT', 70);
+    this.ST1_RENKO_ENTRY_OFFSET_T = number('ST1_RENKO_ENTRY_OFFSET_T', 0.25);
     this.ST1_BB_TOUCH_ATR_MULTIPLIER = number('ST1_BB_TOUCH_ATR_MULTIPLIER', 0.10);
     this.ST1_ENTRY_WINDOW_CANDLES = integer('ST1_ENTRY_WINDOW_CANDLES', 3);
     this.ST1_COIN_EMA_FAST_PERIOD = integer('ST1_COIN_EMA_FAST_PERIOD', 50);
@@ -413,6 +425,34 @@ class Config {
 
     if (!Number.isFinite(this.ST1_BB_TOUCH_ATR_MULTIPLIER) || this.ST1_BB_TOUCH_ATR_MULTIPLIER < 0) {
       throw new Error('ST1_BB_TOUCH_ATR_MULTIPLIER must be 0 or greater');
+    }
+    if (this.ST1_RENKO_SOURCE_INTERVAL !== '15m') {
+      throw new Error('ST1_RENKO_SOURCE_INTERVAL must be 15m');
+    }
+    for (const [name, value, minimum] of [
+      ['ST1_RENKO_CANDLE_LIMIT', this.ST1_RENKO_CANDLE_LIMIT, 50],
+      ['ST1_RENKO_MAX_BRICKS', this.ST1_RENKO_MAX_BRICKS, 32],
+      ['ST1_RENKO_ATR_PERIOD', this.ST1_RENKO_ATR_PERIOD, 2],
+      ['ST1_RENKO_BOLLINGER_PERIOD', this.ST1_RENKO_BOLLINGER_PERIOD, 2],
+      ['ST1_RENKO_RSI_PERIOD', this.ST1_RENKO_RSI_PERIOD, 2]
+    ]) {
+      if (!Number.isInteger(value) || value < minimum) {
+        throw new Error(`${name} must be an integer greater than or equal to ${minimum}`);
+      }
+    }
+    for (const [name, value] of [
+      ['ST1_RENKO_BOLLINGER_STD_DEV', this.ST1_RENKO_BOLLINGER_STD_DEV],
+      ['ST1_RENKO_BB_TOUCH_TOLERANCE_T', this.ST1_RENKO_BB_TOUCH_TOLERANCE_T],
+      ['ST1_RENKO_ENTRY_OFFSET_T', this.ST1_RENKO_ENTRY_OFFSET_T]
+    ]) {
+      if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be greater than 0`);
+    }
+    if (!Number.isFinite(this.ST1_RENKO_RSI_OVERSOLD)
+      || !Number.isFinite(this.ST1_RENKO_RSI_OVERBOUGHT)
+      || this.ST1_RENKO_RSI_OVERSOLD <= 0
+      || this.ST1_RENKO_RSI_OVERBOUGHT >= 100
+      || this.ST1_RENKO_RSI_OVERSOLD >= this.ST1_RENKO_RSI_OVERBOUGHT) {
+      throw new Error('ST1 Renko RSI thresholds must satisfy 0 < oversold < overbought < 100');
     }
     if (!Number.isInteger(this.ST1_ENTRY_WINDOW_CANDLES) || this.ST1_ENTRY_WINDOW_CANDLES < 1) {
       throw new Error('ST1_ENTRY_WINDOW_CANDLES must be a positive integer');

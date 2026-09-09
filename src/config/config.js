@@ -130,7 +130,7 @@ class Config {
     this.REJECT_VOLUME_ONLY_CONFIRMATION = boolean('REJECT_VOLUME_ONLY_CONFIRMATION', true);
     this.OWNERSHIP_WARNING_COOLDOWN_MS = integer('OWNERSHIP_WARNING_COOLDOWN_MS', 30000);
     this.BOT_NAME = String(process.env.BOT_NAME || 'ST1');
-    this.APP_VERSION = String(process.env.APP_VERSION || 'ST1');
+    this.APP_VERSION = String(AGROS_POLICY.APP_VERSION);
 
     // Similarity Engine
     this.SIMILARITY_THRESHOLD = integer('SIMILARITY_THRESHOLD', 52);

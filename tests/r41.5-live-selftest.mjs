@@ -4,7 +4,7 @@ import AGROS_POLICY from '../src/config/agros-policy.js';
 
 assert.equal(AGROS_POLICY.APP_MODE, 'paper');
 assert.equal(AGROS_POLICY.ENABLE_REAL_TRADING, 'false');
-assert.equal(AGROS_POLICY.APP_VERSION, 'ST1-R41.5-LIVE-25X50-10X');
+assert.equal(AGROS_POLICY.APP_VERSION, 'ST1-R42-SIMPLE-15M-RENKO-RSI-LONG-SHORT');
 assert.equal(AGROS_POLICY.LEVERAGE, '10');
 assert.equal(AGROS_POLICY.MAX_POSITIONS, '25');
 assert.equal(AGROS_POLICY.LIVE_MAX_POSITIONS_HARD_CAP, '25');

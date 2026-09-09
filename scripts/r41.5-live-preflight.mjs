@@ -2,12 +2,12 @@ import config from '../src/config/config.js';
 import orderService from '../src/services/order-service.js';
 
 const fail = (message) => {
-  throw new Error(`R41.5 LIVE PREFLIGHT FAILED: ${message}`);
+  throw new Error(`R42 LIVE PREFLIGHT FAILED: ${message}`);
 };
 
 if (config.APP_MODE !== 'live' || config.ENABLE_REAL_TRADING !== true) fail('live flags are not explicit');
 if (config.PAPER_UNLIMITED_POSITIONS !== false) fail('PAPER_UNLIMITED_POSITIONS must be false');
-if (config.APP_VERSION !== 'ST1-R41.5-LIVE-25X50-10X') fail(`unexpected version ${config.APP_VERSION}`);
+if (config.APP_VERSION !== 'ST1-R42-SIMPLE-15M-RENKO-RSI-LONG-SHORT') fail(`unexpected version ${config.APP_VERSION}`);
 if (config.LEVERAGE !== 10) fail(`leverage must be 10, received ${config.LEVERAGE}`);
 if (config.MAX_POSITIONS !== 25 || config.LIVE_MAX_POSITIONS_HARD_CAP !== 25) fail('position cap must be 25');
 if (config.TRADE_SIZE_USDT !== 50 || config.LIVE_MAX_TRADE_SIZE_USDT !== 50) fail('trade size cap must be 50 USDT');

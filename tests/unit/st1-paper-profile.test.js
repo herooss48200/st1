@@ -31,6 +31,6 @@ describe('ST1 R41.1 PAPER final profile', () => {
     expect(config.APP_MODE).toBe('paper');
     expect(config.ENABLE_REAL_TRADING).toBe(false);
     expect(config.LEVERAGE).toBe(10);
-    expect(config.APP_VERSION).toBe('ST1-R41.5-LIVE-25X50-10X');
+    expect(config.APP_VERSION).toBe('ST1-R42-SIMPLE-15M-RENKO-RSI-LONG-SHORT');
   });
 });

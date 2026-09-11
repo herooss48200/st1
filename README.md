@@ -1,10 +1,10 @@
 # ST1 — Binance Futures PAPER Strategy
 
-ST1 is the separate Node.js strategy project for Binance USDT-M Futures. This build is intentionally PAPER-first. Its entry contract is: 15m Bollinger setup candle → opposite-color closed confirmation → W1/W2/W3 live break of the setup candle solid body → coin EMA50/EMA200 → coin SuperTrend → BTC regime → strict final BTC15 SuperTrend.
+ST1 is the separate Node.js strategy project for Binance USDT-M Futures. R43 is intentionally and technically PAPER-only. Its entry contract is: closed 15m-source Renko brick + Renko RSI/Bollinger setup → fresh closed 1m crossing of the 0.25T trigger → rolling three-minute taker-flow confirmation. LIVE and TESTNET startup paths are locked.
 
 Position follow-up defaults to `STAGED_R_ATR`: entry-to-stop distance is recorded as 1R, commission-adjusted break-even requires both the configured R and ATR thresholds, and trailing starts at 1.5R. The Chandelier stop uses the true highest/lowest observed price since entry. Its distance is 2.25 ATR for aligned BTC/ETH trends, 1.75 ATR normally, and 1.25 ATR when they diverge. The former moving take-profit behavior remains available only through `POSITION_FOLLOW_MODE=LEGACY`.
 
-> Trading software carries financial risk. Validate changes in paper and testnet modes before considering live operation.
+> Trading software carries financial risk. This release can only create simulated PAPER orders.
 
 ## Current architecture
 
@@ -23,7 +23,6 @@ Bootstrap currently initializes six services and six engines.
 - Trend safety: at least 200 valid candles are required; insufficient data returns `SIDEWAYS` with zero confidence.
 - Market trend: BTC 50% + ETH 25% + market breadth 25%; a strong BTC/ETH direction conflict blocks entries.
 - PAPER aggregate positions: unlimited; same coin: maximum 1.
-- Future LIVE safety cap: 5 simultaneous positions.
 - Maximum position notional: 50 USDT.
 - Ambush timeout: 15 minutes by default; candidates may be rebuilt on the next scan.
 - Market breadth: hybrid 24-hour universe plus closed 15-minute momentum. It actively contributes 25% of the weighted market-trend score.
@@ -34,7 +33,7 @@ The authoritative list of settings and descriptions is [.env.example](.env.examp
 
 - Node.js 20 recommended (minimum supported: Node.js 18)
 - npm
-- Binance API credentials are not required in PAPER mode; LIVE requires explicit credentials and real-trading authorization
+- Binance API credentials are not required for this PAPER-only release
 - Docker / Docker Compose only when container deployment is used
 
 ## Setup
@@ -65,8 +64,6 @@ The scripts use `cross-env`, so the same commands work in PowerShell, Command Pr
 
 ```text
 npm run paper
-npm run testnet
-npm run live
 npm run dev
 npm run lint
 npm test
@@ -76,7 +73,7 @@ npm run test:coverage
 npm run build
 ```
 
-Live mode additionally requires `ENABLE_REAL_TRADING=true`.
+`npm run live` and `npm run testnet` intentionally terminate with the PAPER-only safety error.
 
 ## Deterministic tests
 

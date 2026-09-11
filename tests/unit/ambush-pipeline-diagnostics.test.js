@@ -112,18 +112,21 @@ function findLatestSummary() {
 }
 
 describe('Ambush pipeline diagnostics', () => {
+  const originalSimpleRenkoEntryEnabled = config.ST1_SIMPLE_RENKO_ENTRY_ENABLED;
   const originalTrendInterval = process.env.BTC_TREND_INTERVAL;
   const originalSimilarityInterval = process.env.SIMILARITY_INTERVAL;
   const originalTopCoinsCount = process.env.TOP_COINS_COUNT;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    config.ST1_SIMPLE_RENKO_ENTRY_ENABLED = false;
     process.env.BTC_TREND_INTERVAL = '1h';
     process.env.SIMILARITY_INTERVAL = '15m';
     process.env.TOP_COINS_COUNT = '600';
   });
 
   afterAll(() => {
+    config.ST1_SIMPLE_RENKO_ENTRY_ENABLED = originalSimpleRenkoEntryEnabled;
     process.env.BTC_TREND_INTERVAL = originalTrendInterval;
     process.env.SIMILARITY_INTERVAL = originalSimilarityInterval;
     process.env.TOP_COINS_COUNT = originalTopCoinsCount;

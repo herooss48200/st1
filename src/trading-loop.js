@@ -9,7 +9,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { classifyEconomicOutcome, selectFilledProtectiveOrder } from './utils/close-truth.js';
 import St1RescueRadar from './services/st1-rescue-radar.js';
-import { analyzeSimpleSt1RenkoSetup, hasCrossedEntryTarget } from './engines/st1-renko-entry-engine.js';
+import {
+  analyzeSimpleSt1RenkoSetup,
+  analyzeTakerFlowConfirmation,
+  hasCrossedEntryTarget,
+  isOnEntryResetSide,
+  isWithinEntryChaseLimit
+} from './engines/st1-renko-entry-engine.js';
 
 const STRATEGY_CANDLE_INTERVAL_MS = config.STRATEGY_CANDLE_INTERVAL_MS;
 const BTC_SYMBOL = config.BTC_SYMBOL;
@@ -116,6 +122,7 @@ export class TradingLoop {
     this.simpleRenkoUniverse = [];
     this.st1RenkoAnalysisCache = new Map();
     this.st1RenkoLastExecutedSetupCloseTimes = new Map();
+    this.st1RenkoInvalidatedSetupSignatures = new Map();
     this.activePositions = new Map();
     this.tradeStats = {
       total: 0,
@@ -540,6 +547,32 @@ export class TradingLoop {
     };
   }
 
+  getSimpleRenkoOrderFlowOptions() {
+    return {
+      sourceInterval: config.ST1_ORDERFLOW_INTERVAL,
+      candleLimit: config.ST1_ORDERFLOW_CANDLE_LIMIT,
+      windowCandles: config.ST1_ORDERFLOW_WINDOW_CANDLES,
+      requiredConfirmations: config.ST1_ORDERFLOW_REQUIRED_CONFIRMATIONS,
+      confirmationTimeoutMs: Number(config.ST1_ORDERFLOW_CONFIRM_TIMEOUT_MINUTES) * 60_000,
+      longMinimumBuyRatio: config.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO,
+      shortMaximumBuyRatio: config.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO,
+      maxChaseT: config.ST1_RENKO_MAX_CHASE_T
+    };
+  }
+
+  invalidateSimpleRenkoSetup(coin, ambush, reason, details = {}) {
+    const signature = ambush?.st1Setup?.setupSignature;
+    if (signature) this.st1RenkoInvalidatedSetupSignatures.set(coin, signature);
+    this.ambushList.delete(coin);
+    logger.info('ST1 Renko order-flow setup invalidated', {
+      coin,
+      signal: ambush?.expectedSignal || null,
+      reason,
+      setupSignature: signature || null,
+      ...details
+    });
+  }
+
   async refreshSimpleRenkoUniverse(now = Date.now()) {
     const refreshIntervalMs = this.resolveAmbushRefreshIntervalMs();
     if (this.lastAmbushRefreshAt !== null && now - this.lastAmbushRefreshAt < refreshIntervalMs) {
@@ -608,6 +641,7 @@ export class TradingLoop {
 
   async runSimpleRenkoEntryCycle(notificationSummary, now, maxPositions) {
     const options = this.getSimpleRenkoOptions();
+    const orderFlowOptions = this.getSimpleRenkoOrderFlowOptions();
     const candleLimit = Number(config.ST1_RENKO_CANDLE_LIMIT);
 
     for (const coin of this.simpleRenkoUniverse) {
@@ -649,6 +683,15 @@ export class TradingLoop {
         continue;
       }
 
+      const invalidatedSignature = this.st1RenkoInvalidatedSetupSignatures.get(coin);
+      if (invalidatedSignature === setup.setupSignature) {
+        if (ambush) this.ambushList.delete(coin);
+        continue;
+      }
+      if (invalidatedSignature && invalidatedSignature !== setup.setupSignature) {
+        this.st1RenkoInvalidatedSetupSignatures.delete(coin);
+      }
+
       if (ambush?.st1Setup?.setupSignature !== setup.setupSignature) {
         ambush = {
           coin,
@@ -664,7 +707,15 @@ export class TradingLoop {
           scanReason: 'ST1_SIMPLE_RENKO_SIGNAL',
           scanOnly: false,
           st1Setup: setup,
-          st1LastFilterReason: null
+          st1LastFilterReason: null,
+          st1FlowState: {
+            resetSideSeen: false,
+            resetSideSeenAt: null,
+            crossingCloseTime: null,
+            confirmationDeadlineAt: null,
+            confirmationCount: 0,
+            lastEvaluatedCloseTime: null
+          }
         };
         this.ambushList.set(coin, ambush);
         this.markEntryFunnelStage(setup.signal, 'setup', coin);
@@ -679,7 +730,12 @@ export class TradingLoop {
           brickHigh: setup.brick.high,
           brickLow: setup.brick.low,
           entryOffsetT: setup.entryOffsetT,
-          targetPrice: setup.targetPrice
+          targetPrice: setup.targetPrice,
+          orderFlowWindowCandles: orderFlowOptions.windowCandles,
+          orderFlowRequiredConfirmations: orderFlowOptions.requiredConfirmations,
+          longMinimumBuyRatio: orderFlowOptions.longMinimumBuyRatio,
+          shortMaximumBuyRatio: orderFlowOptions.shortMaximumBuyRatio,
+          maxChaseT: orderFlowOptions.maxChaseT
         });
       }
 
@@ -692,14 +748,123 @@ export class TradingLoop {
       }
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) continue;
 
+      const flowState = ambush.st1FlowState || {
+        resetSideSeen: false,
+        resetSideSeenAt: null,
+        crossingCloseTime: null,
+        confirmationDeadlineAt: null,
+        confirmationCount: 0,
+        lastEvaluatedCloseTime: null
+      };
+      ambush.st1FlowState = flowState;
+      if (!flowState.resetSideSeen && isOnEntryResetSide(setup, currentPrice)) {
+        flowState.resetSideSeen = true;
+        flowState.resetSideSeenAt = now;
+      }
+      if (!flowState.resetSideSeen) continue;
+
+      let oneMinuteCandles;
+      try {
+        oneMinuteCandles = this.historicalCandleCache
+          ? await this.historicalCandleCache.getOrFetchCandles(
+              coin,
+              orderFlowOptions.sourceInterval,
+              orderFlowOptions.candleLimit
+            )
+          : await this.marketData.getKlines(
+              coin,
+              orderFlowOptions.sourceInterval,
+              orderFlowOptions.candleLimit
+            );
+      } catch (error) {
+        logger.warn('ST1 order-flow candles unavailable', { coin, error: error.message });
+        continue;
+      }
+
+      const flow = analyzeTakerFlowConfirmation(setup, oneMinuteCandles, now, orderFlowOptions);
+      if (!flow.valid) {
+        ambush.st1LastFilterReason = flow.reason;
+        continue;
+      }
+
+      if (flowState.crossingCloseTime != null
+        && now > Number(flowState.confirmationDeadlineAt)) {
+        this.invalidateSimpleRenkoSetup(coin, ambush, 'ST1_ORDERFLOW_CONFIRM_TIMEOUT', {
+          crossingCloseTime: flowState.crossingCloseTime,
+          confirmationCount: flowState.confirmationCount
+        });
+        continue;
+      }
+
+      if (flowState.crossingCloseTime == null) {
+        const crossingMustCloseAfter = Math.max(
+          Number(ambush.addedAt || 0),
+          Number(flowState.resetSideSeenAt || 0)
+        );
+        if (!flow.freshCross || Number(flow.latestCloseTime) <= crossingMustCloseAfter) continue;
+        flowState.crossingCloseTime = flow.latestCloseTime;
+        flowState.confirmationDeadlineAt = Number(flow.latestCloseTime)
+          + Number(orderFlowOptions.confirmationTimeoutMs);
+      } else if (Number(flow.latestCloseTime) <= Number(flowState.lastEvaluatedCloseTime || 0)) {
+        continue;
+      }
+
+      if (!flow.holdsBeyondTarget) {
+        this.invalidateSimpleRenkoSetup(coin, ambush, 'ST1_ORDERFLOW_FAKE_BREAKOUT_CLOSE_BACK', {
+          targetPrice: setup.targetPrice,
+          latestClose: flow.latestClose,
+          takerBuyRatio: flow.takerBuyRatio
+        });
+        continue;
+      }
+
+      if (!isWithinEntryChaseLimit(setup, flow.latestClose, orderFlowOptions.maxChaseT)) {
+        this.invalidateSimpleRenkoSetup(coin, ambush, 'ST1_ORDERFLOW_CLOSED_PRICE_CHASE_LIMIT', {
+          targetPrice: setup.targetPrice,
+          latestClose: flow.latestClose,
+          maxChaseT: orderFlowOptions.maxChaseT
+        });
+        continue;
+      }
+
+      flowState.lastEvaluatedCloseTime = flow.latestCloseTime;
+      flowState.confirmationCount = flow.flowAligned
+        ? Number(flowState.confirmationCount || 0) + 1
+        : 0;
+      ambush.st1LastFilterReason = flow.reason;
+
+      logger.info('ST1 Renko order-flow confirmation evaluated', {
+        coin,
+        signal: setup.signal,
+        targetPrice: setup.targetPrice,
+        previousClose: flow.previousClose,
+        latestClose: flow.latestClose,
+        latestCloseTime: flow.latestCloseTime,
+        freshCross: flow.freshCross,
+        takerBuyRatio: flow.takerBuyRatio,
+        normalizedDelta: flow.normalizedDelta,
+        flowAligned: flow.flowAligned,
+        confirmationCount: flowState.confirmationCount,
+        requiredConfirmations: orderFlowOptions.requiredConfirmations
+      });
+
+      if (flowState.confirmationCount < Number(orderFlowOptions.requiredConfirmations)) continue;
       if (!hasCrossedEntryTarget(setup, currentPrice)) continue;
+      if (!isWithinEntryChaseLimit(setup, currentPrice, orderFlowOptions.maxChaseT)) {
+        this.invalidateSimpleRenkoSetup(coin, ambush, 'ST1_ORDERFLOW_LIVE_PRICE_CHASE_LIMIT', {
+          targetPrice: setup.targetPrice,
+          currentPrice,
+          maxChaseT: orderFlowOptions.maxChaseT
+        });
+        continue;
+      }
 
       this.markEntryFunnelStage(setup.signal, 'bodyBreak', coin);
       const confirmation = {
         confirmed: true,
         reason: setup.signal === 'BUY'
-          ? 'ST1_RED_RENKO_HIGH_PLUS_0_25T_CROSSED'
-          : 'ST1_GREEN_RENKO_LOW_MINUS_0_25T_CROSSED',
+          ? 'ST1_LONG_FRESH_CROSS_3M_TAKER_FLOW_CONFIRMED'
+          : 'ST1_SHORT_FRESH_CROSS_3M_TAKER_FLOW_CONFIRMED',
         features: {
           st1SimpleRenko: true,
           sourceInterval: options.sourceInterval,
@@ -712,7 +877,13 @@ export class TradingLoop {
           bollingerUpper: setup.bollinger.upper,
           entryOffsetT: setup.entryOffsetT,
           targetPrice: setup.targetPrice,
-          currentPrice
+          currentPrice,
+          orderFlowInterval: orderFlowOptions.sourceInterval,
+          orderFlowWindowCandles: flow.windowCandles,
+          orderFlowConfirmations: flowState.confirmationCount,
+          takerBuyRatio: flow.takerBuyRatio,
+          normalizedDelta: flow.normalizedDelta,
+          maxChaseT: orderFlowOptions.maxChaseT
         }
       };
 
@@ -729,6 +900,7 @@ export class TradingLoop {
 
       this.markEntryFunnelStage(setup.signal, 'opened', coin);
       this.st1RenkoLastExecutedSetupCloseTimes.set(coin, setup.setupCloseTime);
+      this.st1RenkoInvalidatedSetupSignatures.delete(coin);
       this.ambushList.delete(coin);
       this.activePositions.set(coin, entry.position);
       this.tradeStats.openedTotal += 1;
@@ -2896,8 +3068,8 @@ export class TradingLoop {
       }
       this.markEntryFunnelStage(signal, 'risk', coin);
 
-      // R42 simple Renko mode reaches this point only through its RSI/BB/0.25T signal
-      // plus operational risk limits. Legacy mode keeps its historical gates above.
+      // R43 reaches this point only after the 15m Renko RSI/BB setup, a fresh
+      // closed 1m crossing and two aligned rolling 3m taker-flow confirmations.
 
       const orderResult = await this.orderService.placeOrder({
         symbol: coin,

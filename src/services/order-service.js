@@ -110,6 +110,8 @@ class OrderService {
   }
 
   isLiveTradingEnabled() {
+    const liveTestBypass = process.env.NODE_ENV === 'test' && process.env.ST1_ALLOW_LIVE_TESTS === 'true';
+    if (config.ST1_PAPER_ONLY === true && !liveTestBypass) return false;
     const mode = (process.env.APP_MODE || config.APP_MODE || 'paper').toLowerCase();
     const realTrading = String(process.env.ENABLE_REAL_TRADING || config.ENABLE_REAL_TRADING) === 'true';
     return mode === 'live' && realTrading;

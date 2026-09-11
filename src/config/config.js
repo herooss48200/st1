@@ -28,6 +28,13 @@ class Config {
   validateRequiredEnvVars() {
     const required = ['APP_MODE', 'NODE_ENV'];
     const mode = String(process.env.APP_MODE || 'paper').toLowerCase();
+    const realTradingRequested = String(process.env.ENABLE_REAL_TRADING || 'false').toLowerCase() === 'true';
+    const paperOnly = String(AGROS_POLICY.ST1_PAPER_ONLY || 'false').toLowerCase() === 'true';
+    const liveTestBypass = process.env.NODE_ENV === 'test' && process.env.ST1_ALLOW_LIVE_TESTS === 'true';
+
+    if (paperOnly && !liveTestBypass && (mode !== 'paper' || realTradingRequested)) {
+      throw new Error('ST1 PAPER-ONLY safety lock: APP_MODE=paper and ENABLE_REAL_TRADING=false are mandatory');
+    }
 
     // PAPER intentionally uses public Futures market data without exchange secrets.
     // LIVE remains fail-closed and requires explicit Binance credentials.
@@ -55,6 +62,7 @@ class Config {
     this.APP_MODE = process.env.APP_MODE || 'paper';
     this.NODE_ENV = process.env.NODE_ENV || 'development';
     this.ENABLE_REAL_TRADING = boolean('ENABLE_REAL_TRADING', false);
+    this.ST1_PAPER_ONLY = String(AGROS_POLICY.ST1_PAPER_ONLY || 'false').toLowerCase() === 'true';
     this.PAPER_UNLIMITED_POSITIONS = boolean('PAPER_UNLIMITED_POSITIONS', true);
     this.MAINTENANCE_MODE = boolean('MAINTENANCE_MODE', false);
     this.MAINTENANCE_MESSAGE = process.env.MAINTENANCE_MESSAGE || '';
@@ -242,6 +250,14 @@ class Config {
     this.ST1_RENKO_RSI_OVERSOLD = number('ST1_RENKO_RSI_OVERSOLD', 30);
     this.ST1_RENKO_RSI_OVERBOUGHT = number('ST1_RENKO_RSI_OVERBOUGHT', 70);
     this.ST1_RENKO_ENTRY_OFFSET_T = number('ST1_RENKO_ENTRY_OFFSET_T', 0.25);
+    this.ST1_ORDERFLOW_INTERVAL = String(process.env.ST1_ORDERFLOW_INTERVAL || '1m').trim();
+    this.ST1_ORDERFLOW_CANDLE_LIMIT = integer('ST1_ORDERFLOW_CANDLE_LIMIT', 20);
+    this.ST1_ORDERFLOW_WINDOW_CANDLES = integer('ST1_ORDERFLOW_WINDOW_CANDLES', 3);
+    this.ST1_ORDERFLOW_REQUIRED_CONFIRMATIONS = integer('ST1_ORDERFLOW_REQUIRED_CONFIRMATIONS', 2);
+    this.ST1_ORDERFLOW_CONFIRM_TIMEOUT_MINUTES = number('ST1_ORDERFLOW_CONFIRM_TIMEOUT_MINUTES', 3);
+    this.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO = number('ST1_ORDERFLOW_LONG_MIN_BUY_RATIO', 0.58);
+    this.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO = number('ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO', 0.42);
+    this.ST1_RENKO_MAX_CHASE_T = number('ST1_RENKO_MAX_CHASE_T', 0.25);
     this.ST1_BB_TOUCH_ATR_MULTIPLIER = number('ST1_BB_TOUCH_ATR_MULTIPLIER', 0.10);
     this.ST1_ENTRY_WINDOW_CANDLES = integer('ST1_ENTRY_WINDOW_CANDLES', 3);
     this.ST1_COIN_EMA_FAST_PERIOD = integer('ST1_COIN_EMA_FAST_PERIOD', 50);
@@ -453,6 +469,38 @@ class Config {
       || this.ST1_RENKO_RSI_OVERBOUGHT >= 100
       || this.ST1_RENKO_RSI_OVERSOLD >= this.ST1_RENKO_RSI_OVERBOUGHT) {
       throw new Error('ST1 Renko RSI thresholds must satisfy 0 < oversold < overbought < 100');
+    }
+    if (this.ST1_ORDERFLOW_INTERVAL !== '1m') {
+      throw new Error('ST1_ORDERFLOW_INTERVAL must be 1m');
+    }
+    for (const [name, value, minimum] of [
+      ['ST1_ORDERFLOW_CANDLE_LIMIT', this.ST1_ORDERFLOW_CANDLE_LIMIT, 4],
+      ['ST1_ORDERFLOW_WINDOW_CANDLES', this.ST1_ORDERFLOW_WINDOW_CANDLES, 1],
+      ['ST1_ORDERFLOW_REQUIRED_CONFIRMATIONS', this.ST1_ORDERFLOW_REQUIRED_CONFIRMATIONS, 1]
+    ]) {
+      if (!Number.isInteger(value) || value < minimum) {
+        throw new Error(`${name} must be an integer greater than or equal to ${minimum}`);
+      }
+    }
+    if (this.ST1_ORDERFLOW_CANDLE_LIMIT < this.ST1_ORDERFLOW_WINDOW_CANDLES + 1) {
+      throw new Error('ST1_ORDERFLOW_CANDLE_LIMIT must exceed ST1_ORDERFLOW_WINDOW_CANDLES');
+    }
+    if (!Number.isFinite(this.ST1_ORDERFLOW_CONFIRM_TIMEOUT_MINUTES)
+      || this.ST1_ORDERFLOW_CONFIRM_TIMEOUT_MINUTES <= 0) {
+      throw new Error('ST1_ORDERFLOW_CONFIRM_TIMEOUT_MINUTES must be greater than 0');
+    }
+    if (!Number.isFinite(this.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO)
+      || this.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO <= 0.5
+      || this.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO > 1) {
+      throw new Error('ST1_ORDERFLOW_LONG_MIN_BUY_RATIO must satisfy 0.5 < ratio <= 1');
+    }
+    if (!Number.isFinite(this.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO)
+      || this.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO < 0
+      || this.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO >= 0.5) {
+      throw new Error('ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO must satisfy 0 <= ratio < 0.5');
+    }
+    if (!Number.isFinite(this.ST1_RENKO_MAX_CHASE_T) || this.ST1_RENKO_MAX_CHASE_T <= 0) {
+      throw new Error('ST1_RENKO_MAX_CHASE_T must be greater than 0');
     }
     if (!Number.isInteger(this.ST1_ENTRY_WINDOW_CANDLES) || this.ST1_ENTRY_WINDOW_CANDLES < 1) {
       throw new Error('ST1_ENTRY_WINDOW_CANDLES must be a positive integer');

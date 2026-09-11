@@ -10,6 +10,12 @@ const DEFAULT_OPTIONS = Object.freeze({
   maxBricks: 256
 });
 
+const DEFAULT_ORDER_FLOW_OPTIONS = Object.freeze({
+  windowCandles: 3,
+  longMinimumBuyRatio: 0.58,
+  shortMaximumBuyRatio: 0.42
+});
+
 function finite(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
@@ -252,6 +258,110 @@ export function hasCrossedEntryTarget(setup, currentPrice) {
   return setup.signal === 'BUY' ? price > target : price < target;
 }
 
+export function isOnEntryResetSide(setup, currentPrice) {
+  const price = finite(currentPrice);
+  const target = finite(setup?.targetPrice);
+  if (price == null || target == null || !['BUY', 'SELL'].includes(setup?.signal)) return false;
+  return setup.signal === 'BUY' ? price <= target : price >= target;
+}
+
+export function isWithinEntryChaseLimit(setup, currentPrice, maxChaseT = 0.25) {
+  const price = finite(currentPrice);
+  const target = finite(setup?.targetPrice);
+  const boxSize = finite(setup?.boxSize);
+  const chaseT = finite(maxChaseT);
+  if (price == null || target == null || !(boxSize > 0) || !(chaseT >= 0)
+    || !['BUY', 'SELL'].includes(setup?.signal)) return false;
+
+  const maximumDistance = boxSize * chaseT;
+  return setup.signal === 'BUY'
+    ? price > target && price <= target + maximumDistance
+    : price < target && price >= target - maximumDistance;
+}
+
+export function analyzeTakerFlowConfirmation(setup, candles, now = Date.now(), options = {}) {
+  const settings = { ...DEFAULT_ORDER_FLOW_OPTIONS, ...options };
+  const windowCandles = Math.max(1, Math.floor(Number(settings.windowCandles) || 0));
+  const longMinimumBuyRatio = Number(settings.longMinimumBuyRatio);
+  const shortMaximumBuyRatio = Number(settings.shortMaximumBuyRatio);
+  const target = finite(setup?.targetPrice);
+  const signal = setup?.signal;
+
+  if (!['BUY', 'SELL'].includes(signal) || target == null
+    || !Number.isFinite(longMinimumBuyRatio) || !Number.isFinite(shortMaximumBuyRatio)
+    || longMinimumBuyRatio <= 0.5 || longMinimumBuyRatio > 1
+    || shortMaximumBuyRatio < 0 || shortMaximumBuyRatio >= 0.5) {
+    return { valid: false, reason: 'ST1_ORDERFLOW_CONFIG_INVALID' };
+  }
+
+  const closedCandles = (Array.isArray(candles) ? candles : []).filter((candle) => {
+    const closeTime = finite(candle?.closeTime);
+    return closeTime != null && closeTime <= now;
+  });
+  if (closedCandles.length < Math.max(2, windowCandles)) {
+    return { valid: false, reason: 'ST1_ORDERFLOW_DATA_INSUFFICIENT' };
+  }
+
+  const latest = closedCandles.at(-1);
+  const previous = closedCandles.at(-2);
+  const latestClose = finite(latest?.close);
+  const previousClose = finite(previous?.close);
+  const latestCloseTime = finite(latest?.closeTime);
+  if (latestClose == null || previousClose == null || latestCloseTime == null) {
+    return { valid: false, reason: 'ST1_ORDERFLOW_PRICE_INVALID' };
+  }
+
+  const window = closedCandles.slice(-windowCandles);
+  let totalQuoteVolume = 0;
+  let takerBuyQuoteVolume = 0;
+  for (const candle of window) {
+    const quoteVolume = finite(candle?.quoteVolume);
+    const takerBuyQuote = finite(candle?.takerBuyQuoteVolume);
+    if (!(quoteVolume > 0) || takerBuyQuote == null || takerBuyQuote < 0 || takerBuyQuote > quoteVolume) {
+      return {
+        valid: false,
+        reason: 'ST1_ORDERFLOW_VOLUME_INVALID',
+        latestCloseTime
+      };
+    }
+    totalQuoteVolume += quoteVolume;
+    takerBuyQuoteVolume += takerBuyQuote;
+  }
+
+  if (!(totalQuoteVolume > 0)) {
+    return { valid: false, reason: 'ST1_ORDERFLOW_VOLUME_INVALID', latestCloseTime };
+  }
+
+  const takerBuyRatio = takerBuyQuoteVolume / totalQuoteVolume;
+  const normalizedDelta = (2 * takerBuyQuoteVolume - totalQuoteVolume) / totalQuoteVolume;
+  const freshCross = signal === 'BUY'
+    ? previousClose <= target && latestClose > target
+    : previousClose >= target && latestClose < target;
+  const holdsBeyondTarget = signal === 'BUY' ? latestClose > target : latestClose < target;
+  const flowAligned = signal === 'BUY'
+    ? takerBuyRatio >= longMinimumBuyRatio
+    : takerBuyRatio <= shortMaximumBuyRatio;
+
+  return {
+    valid: true,
+    reason: flowAligned ? 'ST1_ORDERFLOW_ALIGNED' : 'ST1_ORDERFLOW_WEAK',
+    signal,
+    freshCross,
+    holdsBeyondTarget,
+    flowAligned,
+    previousClose,
+    latestClose,
+    latestCloseTime,
+    windowCandles,
+    totalQuoteVolume,
+    takerBuyQuoteVolume,
+    takerBuyRatio,
+    normalizedDelta,
+    longMinimumBuyRatio,
+    shortMaximumBuyRatio
+  };
+}
+
 export default {
   calculateAtr,
   generateRenkoBricks,
@@ -259,5 +369,8 @@ export default {
   calculateRsi,
   analyzeSetupFromBricks,
   analyzeSimpleSt1RenkoSetup,
-  hasCrossedEntryTarget
+  hasCrossedEntryTarget,
+  isOnEntryResetSide,
+  isWithinEntryChaseLimit,
+  analyzeTakerFlowConfirmation
 };

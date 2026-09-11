@@ -1,8 +1,11 @@
 import {
+  analyzeTakerFlowConfirmation,
   analyzeSetupFromBricks,
   calculateRsi,
   generateRenkoBricks,
-  hasCrossedEntryTarget
+  hasCrossedEntryTarget,
+  isOnEntryResetSide,
+  isWithinEntryChaseLimit
 } from '../../src/engines/st1-renko-entry-engine.js';
 
 function directionalBricks(color, count = 30, start = 100, boxSize = 1) {
@@ -110,5 +113,88 @@ describe('ST1 simple 15m Renko entry engine', () => {
 
   test('Wilder RSI uses Renko closes and returns neutral for a flat series', () => {
     expect(calculateRsi(Array(20).fill(100), 14)).toBe(50);
+  });
+
+  test('LONG order-flow confirmation requires a fresh closed 1m cross and strong taker buyers', () => {
+    const setup = { signal: 'BUY', targetPrice: 100, boxSize: 4 };
+    const candles = [
+      { close: 99.5, closeTime: 1, quoteVolume: 100, takerBuyQuoteVolume: 61 },
+      { close: 99.9, closeTime: 2, quoteVolume: 100, takerBuyQuoteVolume: 59 },
+      { close: 100.2, closeTime: 3, quoteVolume: 100, takerBuyQuoteVolume: 60 }
+    ];
+    const result = analyzeTakerFlowConfirmation(setup, candles, 3);
+
+    expect(result.valid).toBe(true);
+    expect(result.freshCross).toBe(true);
+    expect(result.holdsBeyondTarget).toBe(true);
+    expect(result.flowAligned).toBe(true);
+    expect(result.takerBuyRatio).toBeCloseTo(0.60, 12);
+    expect(result.normalizedDelta).toBeCloseTo(0.20, 12);
+  });
+
+  test('SHORT order-flow confirmation mirrors LONG with aggressive seller flow', () => {
+    const setup = { signal: 'SELL', targetPrice: 100, boxSize: 4 };
+    const candles = [
+      { close: 100.5, closeTime: 1, quoteVolume: 100, takerBuyQuoteVolume: 40 },
+      { close: 100.1, closeTime: 2, quoteVolume: 100, takerBuyQuoteVolume: 41 },
+      { close: 99.8, closeTime: 3, quoteVolume: 100, takerBuyQuoteVolume: 39 }
+    ];
+    const result = analyzeTakerFlowConfirmation(setup, candles, 3);
+
+    expect(result.valid).toBe(true);
+    expect(result.freshCross).toBe(true);
+    expect(result.flowAligned).toBe(true);
+    expect(result.takerBuyRatio).toBeCloseTo(0.40, 12);
+    expect(result.normalizedDelta).toBeCloseTo(-0.20, 12);
+  });
+
+  test('weak flow and a close back below the LONG trigger cannot confirm entry', () => {
+    const setup = { signal: 'BUY', targetPrice: 100, boxSize: 4 };
+    const weakCross = analyzeTakerFlowConfirmation(setup, [
+      { close: 99.5, closeTime: 1, quoteVolume: 100, takerBuyQuoteVolume: 52 },
+      { close: 99.9, closeTime: 2, quoteVolume: 100, takerBuyQuoteVolume: 51 },
+      { close: 100.1, closeTime: 3, quoteVolume: 100, takerBuyQuoteVolume: 52 }
+    ], 3);
+    const closeBack = analyzeTakerFlowConfirmation(setup, [
+      { close: 99.9, closeTime: 2, quoteVolume: 100, takerBuyQuoteVolume: 60 },
+      { close: 100.1, closeTime: 3, quoteVolume: 100, takerBuyQuoteVolume: 60 },
+      { close: 99.8, closeTime: 4, quoteVolume: 100, takerBuyQuoteVolume: 60 }
+    ], 4);
+
+    expect(weakCross.freshCross).toBe(true);
+    expect(weakCross.flowAligned).toBe(false);
+    expect(closeBack.holdsBeyondTarget).toBe(false);
+  });
+
+  test('entry reset side and 0.25T anti-chase rules are strict and symmetric', () => {
+    const long = { signal: 'BUY', targetPrice: 100, boxSize: 4 };
+    const short = { signal: 'SELL', targetPrice: 100, boxSize: 4 };
+
+    expect(isOnEntryResetSide(long, 100)).toBe(true);
+    expect(isOnEntryResetSide(long, 100.01)).toBe(false);
+    expect(isWithinEntryChaseLimit(long, 100)).toBe(false);
+    expect(isWithinEntryChaseLimit(long, 101, 0.25)).toBe(true);
+    expect(isWithinEntryChaseLimit(long, 101.01, 0.25)).toBe(false);
+
+    expect(isOnEntryResetSide(short, 100)).toBe(true);
+    expect(isOnEntryResetSide(short, 99.99)).toBe(false);
+    expect(isWithinEntryChaseLimit(short, 100)).toBe(false);
+    expect(isWithinEntryChaseLimit(short, 99, 0.25)).toBe(true);
+    expect(isWithinEntryChaseLimit(short, 98.99, 0.25)).toBe(false);
+  });
+
+  test('missing or impossible taker volume fails closed', () => {
+    const result = analyzeTakerFlowConfirmation(
+      { signal: 'BUY', targetPrice: 100, boxSize: 4 },
+      [
+        { close: 99, closeTime: 1, quoteVolume: 100, takerBuyQuoteVolume: 60 },
+        { close: 99.5, closeTime: 2, quoteVolume: 100, takerBuyQuoteVolume: 120 },
+        { close: 100.1, closeTime: 3, quoteVolume: 100, takerBuyQuoteVolume: 60 }
+      ],
+      3
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe('ST1_ORDERFLOW_VOLUME_INVALID');
   });
 });

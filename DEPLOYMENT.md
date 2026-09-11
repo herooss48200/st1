@@ -6,9 +6,9 @@
 - npm
 - Git
 - Docker and Docker Compose when using containers
-- Binance credentials appropriate to the selected mode
+- Binance public market-data access
 
-Start in paper mode. Live mode sends real orders and requires both `APP_MODE=live` and `ENABLE_REAL_TRADING=true`.
+R43 is PAPER-only. `APP_MODE=live`, `ENABLE_REAL_TRADING=true`, TESTNET and LIVE scripts are rejected by the code-level safety lock.
 
 ## 2. Install
 
@@ -49,7 +49,7 @@ HEALTH_HOST=0.0.0.0
 HEALTH_PORT=3000
 ```
 
-Testnet mode also uses `BINANCE_TESTNET_API_KEY` and `BINANCE_TESTNET_API_SECRET`. Live mode must use restricted keys, an IP allow-list where possible, Futures trading permission only, and no withdrawal permission.
+Binance credentials are not required for the PAPER simulation. Keep any existing secrets outside deployment packages.
 
 Useful risk settings:
 
@@ -79,8 +79,6 @@ Tests are isolated from the project `.env` and use safe values from `tests/setup
 
 ```powershell
 npm run paper
-# npm run testnet
-# npm run live
 ```
 
 The commands are cross-platform and work in PowerShell and Bash.

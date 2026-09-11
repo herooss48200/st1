@@ -78,10 +78,20 @@ function syncAtrRuntimeConfigFromEnv() {
 }
 
 describe('Risk and Trend Flow Fixes', () => {
+  const originalSimpleRenkoEntryEnabled = config.ST1_SIMPLE_RENKO_ENTRY_ENABLED;
+  const originalRescueRadarLiveCloseEnabled = config.ST1_RESCUE_RADAR_LIVE_CLOSE_ENABLED;
+
   beforeEach(() => {
     jest.clearAllMocks();
     // These assertions intentionally cover the backwards-compatible legacy engine.
     config.POSITION_FOLLOW_MODE = 'LEGACY';
+    config.ST1_SIMPLE_RENKO_ENTRY_ENABLED = false;
+    config.ST1_RESCUE_RADAR_LIVE_CLOSE_ENABLED = true;
+  });
+
+  afterAll(() => {
+    config.ST1_SIMPLE_RENKO_ENTRY_ENABLED = originalSimpleRenkoEntryEnabled;
+    config.ST1_RESCUE_RADAR_LIVE_CLOSE_ENABLED = originalRescueRadarLiveCloseEnabled;
   });
 
   test('R41.5 Rescue Radar RED closes the matching managed side in LIVE', async () => {

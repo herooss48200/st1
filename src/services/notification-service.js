@@ -323,6 +323,34 @@ ${typeEmoji} Tip: <code>${triggerType}</code>
     const breadthValidCoins = Number.isFinite(breadth15m?.validCoins)
       ? breadth15m.validCoins
       : breadthLongCount + breadthShortCount + breadthFlatCount;
+    const renkoRejectionLabels = {
+      ST1_RENKO_DATA_INSUFFICIENT: 'Renko tuğlası yetersiz',
+      ST1_RENKO_ATR_INVALID: 'ATR/tuğla boyu geçersiz',
+      ST1_RENKO_INDICATOR_INVALID: 'RSI veya Bollinger hesaplanamadı',
+      ST1_RENKO_LAST_BRICK_NOT_RED: 'Son tuğla kırmızı değil',
+      ST1_RENKO_LAST_BRICK_NOT_GREEN: 'Son tuğla yeşil değil',
+      ST1_RENKO_RSI_NOT_BELOW_30: 'Long RSI 30 altına inmedi',
+      ST1_RENKO_RSI_NOT_ABOVE_70: 'Short RSI 70 üstüne çıkmadı',
+      ST1_RENKO_LOWER_BB_NOT_REACHED: 'Long alt Bollinger teması yok',
+      ST1_RENKO_UPPER_BB_NOT_REACHED: 'Short üst Bollinger teması yok',
+      ST1_RENKO_CANDLE_FETCH_FAILED: '15m mum verisi alınamadı',
+      ST1_RENKO_UNKNOWN_REJECTION: 'Bilinmeyen ret'
+    };
+    const rejectionCounts = summary.rejectionCounts && typeof summary.rejectionCounts === 'object'
+      ? summary.rejectionCounts
+      : {};
+    const rejectionLines = Object.entries(rejectionCounts)
+      .filter(([, count]) => Number.isFinite(Number(count)) && Number(count) > 0)
+      .sort((left, right) => Number(right[1]) - Number(left[1]))
+      .map(([reason, count]) => `• ${renkoRejectionLabels[reason] || reason}: <code>${Number(count)}</code>`);
+    const rejectionText = rejectionLines.length > 0
+      ? `\n🚫 <b>Koşul Retleri</b>\n${rejectionLines.join('\n')}`
+      : '';
+    const candleFailures = Number.isFinite(summary.candleFailures) ? summary.candleFailures : 0;
+    const activePositionSkips = Number.isFinite(summary.activePositionSkips) ? summary.activePositionSkips : 0;
+    const scanExclusionsText = candleFailures > 0 || activePositionSkips > 0
+      ? `\n⚠️ Mum hatası: <code>${candleFailures}</code> | Açık pozisyon nedeniyle atlanan: <code>${activePositionSkips}</code>`
+      : '';
     const breadthText = breadth15m
       ? `🌐 Breadth (15m): <code>${breadthState}</code>
 📚 Breadth Hedefi: <code>${breadthTargetCoins}</code>
@@ -362,7 +390,7 @@ ${typeEmoji} Tip: <code>${triggerType}</code>
 📥 Alınan Coin: <code>${fetchedCoins}</code>
 ✅ Taranan Coin: <code>${scannedCoins}</code>
 🎯 Toplam Pusu: <code>${qualifiedAmbushes}</code>
-🟢 Long Pusu: <code>${longCount}</code> | 🔴 Short Pusu: <code>${shortCount}</code>
+🟢 Long Pusu: <code>${longCount}</code> | 🔴 Short Pusu: <code>${shortCount}</code>${scanExclusionsText}${rejectionText}
       `;
     } else if (simpleRenko && status === 'FAILED') {
       text = `
@@ -442,19 +470,16 @@ ${breadthText}
     const m = r.metrics || {};
     const level = r.level || 'VERİ_YOK';
     const riskSide = r.riskSide || 'YOK';
-
-    const text = `🔬 <b>ST1 GİRİŞ + KURTARMA RADARI</b>
-━━━━━━━━━━━━━━━━━━━━
-🕐 Saat: ${new Date().toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}
-
-<b>GİRİŞ HUNİSİ — SON 15 DK</b>
-🟢 LONG: Pusu <code>${pusu.LONG || 0}</code> → Setup <code>${long.setup || 0}</code> → BodyBreak <code>${long.bodyBreak || 0}</code> → Coin EMA/ST <code>${long.coinDirection || 0}</code> → BTC/ETH <code>${long.trendGuard || 0}</code> → Breadth <code>${long.breadth || 0}</code> → Risk <code>${long.risk || 0}</code> → Açılan <code>${long.opened || 0}</code>
-🔴 SHORT: Pusu <code>${pusu.SHORT || 0}</code> → Setup <code>${short.setup || 0}</code> → BodyBreak <code>${short.bodyBreak || 0}</code> → Coin EMA/ST <code>${short.coinDirection || 0}</code> → BTC/ETH <code>${short.trendGuard || 0}</code> → Breadth <code>${short.breadth || 0}</code> → Risk <code>${short.risk || 0}</code> → Açılan <code>${short.opened || 0}</code>
-
-🚫 <b>Son Yakın Reddedilenler</b>
-${rejectLines}
-
-🛡️ <b>KURTARMA RADARI — ${level}</b>
+    const simpleRenko = this.config.ST1_SIMPLE_RENKO_ENTRY_ENABLED === true;
+    const rescueEnabled = this.config.ST1_RESCUE_RADAR_ENABLED === true;
+    const title = simpleRenko ? 'ST1 R43.1 GİRİŞ HUNİSİ' : 'ST1 GİRİŞ + KURTARMA RADARI';
+    const funnelText = simpleRenko
+      ? `🟢 LONG: Pusu <code>${pusu.LONG || 0}</code> → 1m Kesişim <code>${long.freshCross || 0}</code> → Flow-1 <code>${long.orderFlow1 || 0}</code> → Flow-2 <code>${long.orderFlow2 || 0}</code> → Risk <code>${long.risk || 0}</code> → Açılan <code>${long.opened || 0}</code>
+🔴 SHORT: Pusu <code>${pusu.SHORT || 0}</code> → 1m Kesişim <code>${short.freshCross || 0}</code> → Flow-1 <code>${short.orderFlow1 || 0}</code> → Flow-2 <code>${short.orderFlow2 || 0}</code> → Risk <code>${short.risk || 0}</code> → Açılan <code>${short.opened || 0}</code>`
+      : `🟢 LONG: Pusu <code>${pusu.LONG || 0}</code> → Setup <code>${long.setup || 0}</code> → BodyBreak <code>${long.bodyBreak || 0}</code> → Coin EMA/ST <code>${long.coinDirection || 0}</code> → BTC/ETH <code>${long.trendGuard || 0}</code> → Breadth <code>${long.breadth || 0}</code> → Risk <code>${long.risk || 0}</code> → Açılan <code>${long.opened || 0}</code>
+🔴 SHORT: Pusu <code>${pusu.SHORT || 0}</code> → Setup <code>${short.setup || 0}</code> → BodyBreak <code>${short.bodyBreak || 0}</code> → Coin EMA/ST <code>${short.coinDirection || 0}</code> → BTC/ETH <code>${short.trendGuard || 0}</code> → Breadth <code>${short.breadth || 0}</code> → Risk <code>${short.risk || 0}</code> → Açılan <code>${short.opened || 0}</code>`;
+    const rescueText = rescueEnabled
+      ? `🛡️ <b>KURTARMA RADARI — ${level}</b>
 Risk Altındaki Taraf: <code>${riskSide}</code>
 Neden: <code>${r.reason || 'RADAR_CLEAR'}</code>
 BTC ST 1/3/5/15: <code>${m.btc1Supertrend || '-'} / ${m.btc3Supertrend || '-'} / ${m.btc5Supertrend || '-'} / ${m.btc15Supertrend || '-'}</code>
@@ -466,7 +491,21 @@ Breadth: <code>${m.breadthState || '-'}</code>
 Açık LONG: <code>${m.managedLongCount || 0}</code> | Negatif: <code>${fmt((m.negativeLongRatio || 0) * 100, 1)}%</code> | PnL: <code>${fmt(m.longPortfolioPnlUsdt)} USDT</code>
 Açık SHORT: <code>${m.managedShortCount || 0}</code> | Negatif: <code>${fmt((m.negativeShortRatio || 0) * 100, 1)}%</code> | PnL: <code>${fmt(m.shortPortfolioPnlUsdt)} USDT</code>
 
-ℹ️ NORMAL/YELLOW/ORANGE: gözlem. RED: yalnız PAPER riskli sepeti kapatır ve RECOVERY kilidi uygular.`;
+ℹ️ NORMAL/YELLOW/ORANGE: gözlem. RED: yalnız PAPER riskli sepeti kapatır ve RECOVERY kilidi uygular.`
+      : `🛡️ <b>KURTARMA RADARI — KAPALI</b>
+R43.1 girişlerine, açık PAPER pozisyonlarına ve çıkış yönetimine müdahale etmez.`;
+
+    const text = `🔬 <b>${title}</b>
+━━━━━━━━━━━━━━━━━━━━
+🕐 Saat: ${new Date().toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}
+
+<b>GİRİŞ HUNİSİ — SON 15 DK</b>
+${funnelText}
+
+🚫 <b>Son Yakın Reddedilenler</b>
+${rejectLines}
+
+${rescueText}`;
     return this.sendMessage(text);
   }
 

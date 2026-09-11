@@ -5,7 +5,7 @@ import AGROS_POLICY from '../src/config/agros-policy.js';
 assert.equal(AGROS_POLICY.APP_MODE, 'paper');
 assert.equal(AGROS_POLICY.ENABLE_REAL_TRADING, 'false');
 assert.equal(AGROS_POLICY.ST1_PAPER_ONLY, 'true');
-assert.equal(AGROS_POLICY.APP_VERSION, 'ST1-R43-PAPER-RENKO-ORDERFLOW');
+assert.equal(AGROS_POLICY.APP_VERSION, 'ST1-R43.1-PAPER-RENKO-SCAN-REPORT');
 assert.equal(AGROS_POLICY.LEVERAGE, '10');
 assert.equal(AGROS_POLICY.MAX_POSITIONS, '25');
 assert.equal(AGROS_POLICY.LIVE_MAX_POSITIONS_HARD_CAP, '25');
@@ -38,4 +38,4 @@ assert.match(loopSource, /throw error;\s*\n\s*}\s*\n\s*}\s*\n\s*async fetchLiveO
 assert.match(loopSource, /schema: 2/);
 assert.match(loopSource, /riskTradeHistory: this\.riskTradeHistory\.slice\(0, 5000\)/);
 
-console.log('✅ R43 PAPER-only self-test passed | 15m Renko + fresh 1m cross + 3m taker flow | LIVE locked');
+console.log('✅ R43.1 PAPER-only self-test passed | real Renko scan report + rejection counts | LIVE locked');

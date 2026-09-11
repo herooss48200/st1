@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import orderService from '../../src/services/order-service.js';
 
-describe('ST1 R43 PAPER-only safety lock', () => {
+describe('ST1 R43.1 PAPER-only safety lock', () => {
   test('production startup rejects explicit LIVE flags before the bot can start', () => {
     const result = spawnSync(
       process.execPath,

@@ -1,6 +1,6 @@
 # ST1 — Binance Futures PAPER Strategy
 
-ST1 is the separate Node.js strategy project for Binance USDT-M Futures. R43 is intentionally and technically PAPER-only. Its entry contract is: closed 15m-source Renko brick + Renko RSI/Bollinger setup → fresh closed 1m crossing of the 0.25T trigger → rolling three-minute taker-flow confirmation. LIVE and TESTNET startup paths are locked.
+ST1 is the separate Node.js strategy project for Binance USDT-M Futures. R43.1 is intentionally and technically PAPER-only. Its entry contract is: closed 15m-source Renko brick + Renko RSI/Bollinger setup → fresh closed 1m crossing of the 0.25T trigger → rolling three-minute taker-flow confirmation. The Renko scan summary is emitted only after the full universe analysis completes and includes condition rejection counts. LIVE and TESTNET startup paths are locked.
 
 Position follow-up defaults to `STAGED_R_ATR`: entry-to-stop distance is recorded as 1R, commission-adjusted break-even requires both the configured R and ATR thresholds, and trailing starts at 1.5R. The Chandelier stop uses the true highest/lowest observed price since entry. Its distance is 2.25 ATR for aligned BTC/ETH trends, 1.75 ATR normally, and 1.25 ATR when they diverge. The former moving take-profit behavior remains available only through `POSITION_FOLLOW_MODE=LEGACY`.
 

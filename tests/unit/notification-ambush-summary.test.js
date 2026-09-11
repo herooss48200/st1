@@ -115,4 +115,67 @@ describe('NotificationService ambush summary formatting', () => {
     expect(message).toContain('coinler BTC yönünde tarandı');
     expect(message).toContain('giriş için yeniden hizalanma zorunlu');
   });
+
+  test('simple Renko summary shows real condition rejection counts', async () => {
+    const sendSpy = jest.spyOn(notificationService, 'sendMessage').mockResolvedValue(true);
+
+    await notificationService.sendAmbushSummary({
+      strategy: 'ST1_SIMPLE_RENKO',
+      status: 'COMPLETED',
+      reason: 'ST1_SIMPLE_RENKO_ANALYSIS_COMPLETE',
+      targetCoins: 300,
+      fetchedCoins: 298,
+      scannedCoins: 297,
+      qualifiedAmbushes: 6,
+      ambushCount: 6,
+      longCount: 4,
+      shortCount: 2,
+      candleFailures: 1,
+      rejectionCounts: {
+        ST1_RENKO_RSI_NOT_BELOW_30: 160,
+        ST1_RENKO_RSI_NOT_ABOVE_70: 131,
+        ST1_RENKO_CANDLE_FETCH_FAILED: 1
+      }
+    });
+
+    const message = sendSpy.mock.calls[0][0];
+    expect(message).toContain('ST1 Renko Pusu Taraması');
+    expect(message).toContain('Taranan Coin: <code>297</code>');
+    expect(message).toContain('Toplam Pusu: <code>6</code>');
+    expect(message).toContain('Long Pusu: <code>4</code>');
+    expect(message).toContain('Short Pusu: <code>2</code>');
+    expect(message).toContain('Koşul Retleri');
+    expect(message).toContain('Long RSI 30 altına inmedi: <code>160</code>');
+    expect(message).toContain('15m mum verisi alınamadı: <code>1</code>');
+  });
+
+  test('R43.1 funnel shows the real order-flow stages and rescue radar as disabled', async () => {
+    const sendSpy = jest.spyOn(notificationService, 'sendMessage').mockResolvedValue(true);
+    const previousTelegramEnabled = notificationService.config.ENABLE_TELEGRAM;
+    notificationService.config.ENABLE_TELEGRAM = true;
+
+    try {
+      await notificationService.sendSt1EntryAndRescueRadar({
+        funnel: {
+          pusu: { LONG: 8, SHORT: 3 },
+          LONG: { freshCross: 4, orderFlow1: 3, orderFlow2: 2, risk: 2, opened: 1 },
+          SHORT: { freshCross: 2, orderFlow1: 1, orderFlow2: 1, risk: 1, opened: 1 },
+          recentRejections: []
+        },
+        rescue: null
+      });
+    } finally {
+      notificationService.config.ENABLE_TELEGRAM = previousTelegramEnabled;
+    }
+
+    const message = sendSpy.mock.calls[0][0];
+    expect(message).toContain('ST1 R43.1 GİRİŞ HUNİSİ');
+    expect(message).toContain('1m Kesişim <code>4</code>');
+    expect(message).toContain('Flow-1 <code>3</code>');
+    expect(message).toContain('Flow-2 <code>2</code>');
+    expect(message).toContain('KURTARMA RADARI — KAPALI');
+    expect(message).not.toContain('Coin EMA/ST');
+    expect(message).not.toContain('BTC/ETH');
+    expect(message).not.toContain('RED: yalnız PAPER');
+  });
 });

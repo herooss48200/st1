@@ -1,7 +1,7 @@
 import { TradingLoop } from '../../src/trading-loop.js';
 import config from '../../src/config/config.js';
 
-describe('ST1 R43 PAPER-only order-flow profile', () => {
+describe('ST1 R43.1 PAPER-only order-flow profile', () => {
   test('uses 50 USDT cap, 300-coin universe and unlimited aggregate PAPER slots', () => {
     expect(config.TRADE_SIZE_USDT).toBe(50);
     expect(config.TOP_COINS_COUNT).toBe(300);
@@ -32,7 +32,7 @@ describe('ST1 R43 PAPER-only order-flow profile', () => {
     expect(config.ENABLE_REAL_TRADING).toBe(false);
     expect(config.ST1_PAPER_ONLY).toBe(true);
     expect(config.LEVERAGE).toBe(10);
-    expect(config.APP_VERSION).toBe('ST1-R43-PAPER-RENKO-ORDERFLOW');
+    expect(config.APP_VERSION).toBe('ST1-R43.1-PAPER-RENKO-SCAN-REPORT');
     expect(config.ST1_SIMPLE_RENKO_ENTRY_ENABLED).toBe(true);
     expect(config.ST1_RENKO_SOURCE_INTERVAL).toBe('15m');
     expect(config.ST1_RENKO_RSI_OVERSOLD).toBe(30);

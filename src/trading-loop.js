@@ -120,6 +120,7 @@ export class TradingLoop {
 
     this.ambushList = new Map();
     this.simpleRenkoUniverse = [];
+    this.simpleRenkoPendingScan = null;
     this.st1RenkoAnalysisCache = new Map();
     this.st1RenkoLastExecutedSetupCloseTimes = new Map();
     this.st1RenkoInvalidatedSetupSignatures = new Map();
@@ -195,8 +196,9 @@ export class TradingLoop {
 
   createEntryFunnelWindow() {
     const makeSide = () => ({
-      setup: new Set(), bodyBreak: new Set(), coinDirection: new Set(), trendGuard: new Set(),
-      breadth: new Set(), risk: new Set(), opened: new Set()
+      setup: new Set(), freshCross: new Set(), orderFlow1: new Set(), orderFlow2: new Set(),
+      bodyBreak: new Set(), coinDirection: new Set(), trendGuard: new Set(), breadth: new Set(),
+      risk: new Set(), opened: new Set()
     });
     return { startedAt: Date.now(), LONG: makeSide(), SHORT: makeSide(), rejections: new Map() };
   }
@@ -226,7 +228,10 @@ export class TradingLoop {
     for (const side of ['LONG', 'SHORT']) {
       counts[side] = {};
       const src = this.entryFunnelWindow?.[side] || {};
-      for (const stage of ['setup', 'bodyBreak', 'coinDirection', 'trendGuard', 'breadth', 'risk', 'opened']) {
+      for (const stage of [
+        'setup', 'freshCross', 'orderFlow1', 'orderFlow2', 'bodyBreak',
+        'coinDirection', 'trendGuard', 'breadth', 'risk', 'opened'
+      ]) {
         counts[side][stage] = src[stage] instanceof Set ? src[stage].size : 0;
       }
     }
@@ -564,6 +569,7 @@ export class TradingLoop {
     const signature = ambush?.st1Setup?.setupSignature;
     if (signature) this.st1RenkoInvalidatedSetupSignatures.set(coin, signature);
     this.ambushList.delete(coin);
+    this.markEntryFunnelRejection(ambush?.expectedSignal, coin, reason);
     logger.info('ST1 Renko order-flow setup invalidated', {
       coin,
       signal: ambush?.expectedSignal || null,
@@ -614,38 +620,43 @@ export class TradingLoop {
       [...this.ambushList].filter(([coin]) => symbolSet.has(coin))
     );
     this.lastAmbushRefreshAt = now;
+    this.simpleRenkoPendingScan = {
+      refreshAt: now,
+      targetCoins,
+      fetchedCoins: symbols.length
+    };
     const directions = this.getAmbushDirectionCounts();
     logger.info('ST1 simple Renko universe refreshed', {
       targetCoins,
       fetchedCoins: symbols.length,
       strategy: '15M_RENKO_RSI_BOLLINGER_0_25T',
-      entryGates: 'NONE_BEYOND_SIGNAL_AND_OPERATIONAL_SAFETY'
+      entryGates: 'NONE_BEYOND_SIGNAL_AND_OPERATIONAL_SAFETY',
+      currentAmbushes: this.ambushList.size,
+      currentLongAmbushes: directions.longCount,
+      currentShortAmbushes: directions.shortCount,
+      analysisPending: true
     });
-    await this.notifyAmbushScanResult(this.buildAmbushScanResult({
-      strategy: 'ST1_SIMPLE_RENKO',
-      status: 'COMPLETED',
-      reason: 'ST1_SIMPLE_RENKO_UNIVERSE',
-      targetCoins,
-      fetchedCoins: symbols.length,
-      scannedCoins: symbols.length,
-      qualifiedAmbushes: this.ambushList.size,
-      threshold: null,
-      btcTrend: null,
-      ethTrend: null,
-      ambushCount: this.ambushList.size,
-      longCount: directions.longCount,
-      shortCount: directions.shortCount,
-      breadth15m: null
-    }));
   }
 
   async runSimpleRenkoEntryCycle(notificationSummary, now, maxPositions) {
     const options = this.getSimpleRenkoOptions();
     const orderFlowOptions = this.getSimpleRenkoOrderFlowOptions();
     const candleLimit = Number(config.ST1_RENKO_CANDLE_LIMIT);
+    const pendingScan = this.simpleRenkoPendingScan;
+    let scannedCoins = 0;
+    let candleFailures = 0;
+    let activePositionSkips = 0;
+    const rejectionCounts = new Map();
+    const countRejection = (reason) => {
+      const key = String(reason || 'ST1_RENKO_UNKNOWN_REJECTION');
+      rejectionCounts.set(key, Number(rejectionCounts.get(key) || 0) + 1);
+    };
 
     for (const coin of this.simpleRenkoUniverse) {
-      if (this.activePositions.has(coin)) continue;
+      if (this.activePositions.has(coin)) {
+        activePositionSkips += 1;
+        continue;
+      }
       if (Number.isFinite(maxPositions) && this.activePositions.size >= maxPositions) break;
 
       let ambush = this.ambushList.get(coin) || null;
@@ -657,6 +668,8 @@ export class TradingLoop {
           : await this.marketData.getKlines(coin, options.sourceInterval, candleLimit);
       } catch (error) {
         logger.warn('ST1 simple Renko 15m candles unavailable', { coin, error: error.message });
+        candleFailures += 1;
+        countRejection('ST1_RENKO_CANDLE_FETCH_FAILED');
         continue;
       }
 
@@ -674,7 +687,9 @@ export class TradingLoop {
       if (analysisCacheKey && cachedAnalysis?.key !== analysisCacheKey) {
         this.st1RenkoAnalysisCache.set(coin, { key: analysisCacheKey, setup });
       }
+      scannedCoins += 1;
       if (!setup.triggered) {
+        countRejection(setup.reason);
         if (ambush) this.ambushList.delete(coin);
         continue;
       }
@@ -805,6 +820,7 @@ export class TradingLoop {
         flowState.crossingCloseTime = flow.latestCloseTime;
         flowState.confirmationDeadlineAt = Number(flow.latestCloseTime)
           + Number(orderFlowOptions.confirmationTimeoutMs);
+        this.markEntryFunnelStage(setup.signal, 'freshCross', coin);
       } else if (Number(flow.latestCloseTime) <= Number(flowState.lastEvaluatedCloseTime || 0)) {
         continue;
       }
@@ -832,6 +848,12 @@ export class TradingLoop {
         ? Number(flowState.confirmationCount || 0) + 1
         : 0;
       ambush.st1LastFilterReason = flow.reason;
+      if (flowState.confirmationCount >= 1) {
+        this.markEntryFunnelStage(setup.signal, 'orderFlow1', coin);
+      }
+      if (flowState.confirmationCount >= Number(orderFlowOptions.requiredConfirmations)) {
+        this.markEntryFunnelStage(setup.signal, 'orderFlow2', coin);
+      }
 
       logger.info('ST1 Renko order-flow confirmation evaluated', {
         coin,
@@ -920,6 +942,42 @@ export class TradingLoop {
           leverage: entry.notification.leverage
         }
       );
+    }
+
+    if (pendingScan && this.simpleRenkoPendingScan?.refreshAt === pendingScan.refreshAt) {
+      const directions = this.getAmbushDirectionCounts();
+      const rejectionSummary = Object.fromEntries(
+        [...rejectionCounts.entries()].sort((left, right) => right[1] - left[1])
+      );
+      await this.notifyAmbushScanResult(this.buildAmbushScanResult({
+        strategy: 'ST1_SIMPLE_RENKO',
+        status: 'COMPLETED',
+        reason: 'ST1_SIMPLE_RENKO_ANALYSIS_COMPLETE',
+        targetCoins: pendingScan.targetCoins,
+        fetchedCoins: pendingScan.fetchedCoins,
+        scannedCoins,
+        qualifiedAmbushes: this.ambushList.size,
+        ambushCount: this.ambushList.size,
+        longCount: directions.longCount,
+        shortCount: directions.shortCount,
+        rejectionCounts: rejectionSummary,
+        candleFailures,
+        activePositionSkips,
+        breadth15m: null
+      }));
+      this.simpleRenkoPendingScan = null;
+      logger.info('ST1 simple Renko analysis report completed', {
+        refreshAt: pendingScan.refreshAt,
+        targetCoins: pendingScan.targetCoins,
+        fetchedCoins: pendingScan.fetchedCoins,
+        scannedCoins,
+        qualifiedAmbushes: this.ambushList.size,
+        longCount: directions.longCount,
+        shortCount: directions.shortCount,
+        candleFailures,
+        activePositionSkips,
+        rejectionCounts: rejectionSummary
+      });
     }
 
     if (notificationSummary.opened.length > 0 || notificationSummary.closed.length > 0) {
@@ -1211,7 +1269,12 @@ export class TradingLoop {
         : Number(config.MARKET_BREADTH_TOP_COINS),
       breadthUniverseSize: Number.isFinite(payload.breadthUniverseSize)
         ? payload.breadthUniverseSize
-        : Number(this.marketBreadth?.current?.universeSize || 0)
+        : Number(this.marketBreadth?.current?.universeSize || 0),
+      rejectionCounts: payload.rejectionCounts && typeof payload.rejectionCounts === 'object'
+        ? { ...payload.rejectionCounts }
+        : {},
+      candleFailures: Number.isFinite(payload.candleFailures) ? payload.candleFailures : 0,
+      activePositionSkips: Number.isFinite(payload.activePositionSkips) ? payload.activePositionSkips : 0
     };
   }
 
@@ -3068,7 +3131,7 @@ export class TradingLoop {
       }
       this.markEntryFunnelStage(signal, 'risk', coin);
 
-      // R43 reaches this point only after the 15m Renko RSI/BB setup, a fresh
+      // R43.1 reaches this point only after the 15m Renko RSI/BB setup, a fresh
       // closed 1m crossing and two aligned rolling 3m taker-flow confirmations.
 
       const orderResult = await this.orderService.placeOrder({

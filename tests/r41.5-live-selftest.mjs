@@ -5,7 +5,7 @@ import AGROS_POLICY from '../src/config/agros-policy.js';
 assert.equal(AGROS_POLICY.APP_MODE, 'paper');
 assert.equal(AGROS_POLICY.ENABLE_REAL_TRADING, 'false');
 assert.equal(AGROS_POLICY.ST1_PAPER_ONLY, 'true');
-assert.equal(AGROS_POLICY.APP_VERSION, 'ST1-R43.1-PAPER-RENKO-SCAN-REPORT');
+assert.equal(AGROS_POLICY.APP_VERSION, 'ST1-R43.2-SCIENTIFIC-SHADOW');
 assert.equal(AGROS_POLICY.LEVERAGE, '10');
 assert.equal(AGROS_POLICY.MAX_POSITIONS, '25');
 assert.equal(AGROS_POLICY.LIVE_MAX_POSITIONS_HARD_CAP, '25');
@@ -20,6 +20,7 @@ assert.equal(AGROS_POLICY.ST1_RESCUE_RADAR_LIVE_CLOSE_ENABLED, 'false');
 assert.equal(AGROS_POLICY.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO, '0.58');
 assert.equal(AGROS_POLICY.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO, '0.42');
 assert.equal(AGROS_POLICY.ST1_ORDERFLOW_REQUIRED_CONFIRMATIONS, '2');
+assert.equal(AGROS_POLICY.ST1_SCIENTIFIC_SHADOW_ENABLED, 'true');
 
 const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 assert.match(packageJson.scripts.paper, /APP_MODE=paper/);
@@ -38,4 +39,4 @@ assert.match(loopSource, /throw error;\s*\n\s*}\s*\n\s*}\s*\n\s*async fetchLiveO
 assert.match(loopSource, /schema: 2/);
 assert.match(loopSource, /riskTradeHistory: this\.riskTradeHistory\.slice\(0, 5000\)/);
 
-console.log('✅ R43.1 PAPER-only self-test passed | real Renko scan report + rejection counts | LIVE locked');
+console.log('✅ R43.2 PAPER-only self-test passed | scientific shadow lab | LIVE locked');

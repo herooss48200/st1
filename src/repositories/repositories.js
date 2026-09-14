@@ -67,6 +67,36 @@ class TradeRepository {
     return trade;
   }
 
+  async markOrphanedPaperSnapshots({
+    currentSessionId,
+    currentSessionStartedAt,
+    activeTradeIds = [],
+    orphanedAt = Date.now()
+  }) {
+    const activeIds = new Set(activeTradeIds.filter(Boolean).map(String));
+    const currentId = String(currentSessionId || '');
+    let updated = 0;
+
+    for (const trade of this.trades) {
+      if (trade.exitTime || activeIds.has(String(trade.tradeId || ''))) continue;
+      const sameSession = currentId && String(trade.sessionId || '') === currentId;
+      const enteredBeforeCurrentSession = Number(trade.entryTime) < Number(currentSessionStartedAt);
+      if (sameSession || !enteredBeforeCurrentSession) continue;
+      if (trade.researchStatus === 'ORPHANED_PRIOR_PAPER_SESSION') continue;
+
+      Object.assign(trade, {
+        researchStatus: 'ORPHANED_PRIOR_PAPER_SESSION',
+        orphanedAt,
+        orphanedBySessionId: currentId || null,
+        updatedAt: new Date(orphanedAt)
+      });
+      updated += 1;
+    }
+
+    if (updated > 0) this.saveTradesToDisk();
+    return updated;
+  }
+
   async getAll() {
     return this.trades;
   }

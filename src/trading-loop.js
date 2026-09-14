@@ -16,6 +16,13 @@ import {
   isOnEntryResetSide,
   isWithinEntryChaseLimit
 } from './engines/st1-renko-entry-engine.js';
+import {
+  buildScientificShadowConfig,
+  createSt1ScientificShadow,
+  finalizeSt1ScientificShadow,
+  summarizeShadowBreadth,
+  updateSt1ScientificShadow
+} from './research/st1-scientific-shadow.js';
 
 const STRATEGY_CANDLE_INTERVAL_MS = config.STRATEGY_CANDLE_INTERVAL_MS;
 const BTC_SYMBOL = config.BTC_SYMBOL;
@@ -124,6 +131,15 @@ export class TradingLoop {
     this.st1RenkoAnalysisCache = new Map();
     this.st1RenkoLastExecutedSetupCloseTimes = new Map();
     this.st1RenkoInvalidatedSetupSignatures = new Map();
+    this.st1ScientificShadowState = {
+      calculatedAt: null,
+      lastTrendRefreshAt: null,
+      btcTrend: null,
+      ethTrend: null,
+      trend: null,
+      breadth15m: null,
+      breadth24h: null
+    };
     this.activePositions = new Map();
     this.tradeStats = {
       total: 0,
@@ -579,6 +595,92 @@ export class TradingLoop {
     });
   }
 
+  getScientificShadowSettings() {
+    return buildScientificShadowConfig(config);
+  }
+
+  getScientificShadowRegimeTelemetry(now = Date.now()) {
+    const state = this.st1ScientificShadowState || {};
+    return {
+      calculatedAt: state.calculatedAt,
+      ageMs: Number.isFinite(Number(state.calculatedAt)) ? now - Number(state.calculatedAt) : null,
+      btcTrend: state.btcTrend,
+      ethTrend: state.ethTrend,
+      trend: state.trend,
+      breadth15m: state.breadth15m,
+      breadth24h: state.breadth24h
+    };
+  }
+
+  async refreshScientificShadowTrend(now = Date.now()) {
+    if (!config.ST1_SCIENTIFIC_SHADOW_ENABLED || typeof this.trend?.analyzeTrend !== 'function') return;
+    const previousRefresh = Number(this.st1ScientificShadowState?.lastTrendRefreshAt || 0);
+    if (previousRefresh > 0 && now - previousRefresh < Number(config.ST1_SHADOW_REGIME_REFRESH_MS)) return;
+
+    try {
+      const interval = String(config.ST1_RENKO_SOURCE_INTERVAL || '15m');
+      const candleLimit = Math.max(
+        Number(config.BTC_TREND_EMA_SLOW_PERIOD || 200) + 1,
+        Number(config.BTC_TREND_EMA_FAST_PERIOD || 50) + 1
+      );
+      const fetchCandles = (symbol) => this.historicalCandleCache
+        ? this.historicalCandleCache.getOrFetchCandles(symbol, interval, candleLimit)
+        : this.marketData.getKlines(symbol, interval, candleLimit);
+      const [btcCandles, ethCandles] = await Promise.all([
+        fetchCandles(BTC_SYMBOL),
+        fetchCandles('ETHUSDT')
+      ]);
+      const trend = await this.trend.analyzeTrend(btcCandles, ethCandles);
+      this.st1ScientificShadowState = {
+        ...this.st1ScientificShadowState,
+        calculatedAt: now,
+        lastTrendRefreshAt: now,
+        btcTrend: trend?.btcTrend || trend?.trend || null,
+        ethTrend: trend?.ethTrend || null,
+        trend: {
+          ema50: trend?.ema50 ?? null,
+          ema200: trend?.ema200 ?? null,
+          emaGapPercent: trend?.emaGapPercent ?? null,
+          adx: trend?.adx ?? null,
+          transitionLocked: trend?.btcTransitionLocked ?? trend?.transitionLocked ?? null
+        }
+      };
+    } catch (error) {
+      this.st1ScientificShadowState = {
+        ...this.st1ScientificShadowState,
+        lastTrendRefreshAt: now
+      };
+      logger.warn('ST1 scientific shadow trend refresh failed; trading remains unaffected', {
+        error: error.message
+      });
+    }
+  }
+
+  updateScientificShadowPosition(position, currentPrice, atrValue = null, now = Date.now()) {
+    if (!config.ST1_SCIENTIFIC_SHADOW_ENABLED || !position?.scientificShadow) return;
+    try {
+      const result = updateSt1ScientificShadow(position.scientificShadow, {
+        signal: position.signal,
+        entryPrice: position.entryPrice,
+        currentPrice,
+        atrValue,
+        enteredAt: position.enteredAt,
+        now
+      });
+      position.scientificShadow = result.shadow;
+      if (result.changed) {
+        TradeSnapshotService.recordResearch(position.entryOrderId, {
+          scientificShadow: position.scientificShadow
+        });
+      }
+    } catch (error) {
+      logger.warn('ST1 scientific shadow position update failed; position management continues', {
+        coin: position.coin,
+        error: error.message
+      });
+    }
+  }
+
   async refreshSimpleRenkoUniverse(now = Date.now()) {
     const refreshIntervalMs = this.resolveAmbushRefreshIntervalMs();
     if (this.lastAmbushRefreshAt !== null && now - this.lastAmbushRefreshAt < refreshIntervalMs) {
@@ -612,6 +714,19 @@ export class TradingLoop {
       .map((coin) => String(coin?.symbol || '').trim().toUpperCase())
       .filter((symbol) => symbol && !this.isEntrySymbolExcluded(symbol));
     const symbolSet = new Set(symbols);
+    if (config.ST1_SCIENTIFIC_SHADOW_ENABLED) {
+      const selected = (Array.isArray(topCoinsData) ? topCoinsData : [])
+        .filter((coin) => symbolSet.has(String(coin?.symbol || '').trim().toUpperCase()))
+        .map((coin) => ({
+          returnPercent: Number(coin?.priceChangePercent),
+          quoteVolume: Number(coin?.volume24h ?? coin?.quoteVolume)
+        }));
+      this.st1ScientificShadowState = {
+        ...this.st1ScientificShadowState,
+        calculatedAt: now,
+        breadth24h: summarizeShadowBreadth(selected, now, { interval: '24h' })
+      };
+    }
     this.simpleRenkoUniverse = symbols;
     this.st1RenkoAnalysisCache = new Map(
       [...this.st1RenkoAnalysisCache].filter(([coin]) => symbolSet.has(coin))
@@ -639,6 +754,7 @@ export class TradingLoop {
   }
 
   async runSimpleRenkoEntryCycle(notificationSummary, now, maxPositions) {
+    await this.refreshScientificShadowTrend(now);
     const options = this.getSimpleRenkoOptions();
     const orderFlowOptions = this.getSimpleRenkoOrderFlowOptions();
     const candleLimit = Number(config.ST1_RENKO_CANDLE_LIMIT);
@@ -646,6 +762,7 @@ export class TradingLoop {
     let scannedCoins = 0;
     let candleFailures = 0;
     let activePositionSkips = 0;
+    const shadowBreadthRows15m = [];
     const rejectionCounts = new Map();
     const countRejection = (reason) => {
       const key = String(reason || 'ST1_RENKO_UNKNOWN_REJECTION');
@@ -677,6 +794,19 @@ export class TradingLoop {
         const closeTime = Number(candle?.closeTime);
         return Number.isFinite(closeTime) && closeTime <= now;
       });
+      if (config.ST1_SCIENTIFIC_SHADOW_ENABLED && candles.length >= 2) {
+        const closedCandles = candles.filter((item) => Number(item?.closeTime) <= now);
+        const previousCandle = closedCandles.at(-2);
+        const currentCandle = closedCandles.at(-1);
+        const previousClose = Number(previousCandle?.close);
+        const currentClose = Number(currentCandle?.close);
+        if (previousClose > 0 && Number.isFinite(currentClose)) {
+          shadowBreadthRows15m.push({
+            returnPercent: ((currentClose - previousClose) / previousClose) * 100,
+            quoteVolume: Number(currentCandle?.quoteVolume || 0)
+          });
+        }
+      }
       const analysisCacheKey = latestClosedCandle
         ? `${latestClosedCandle.closeTime}:${latestClosedCandle.close}:${candles.length}`
         : null;
@@ -945,6 +1075,13 @@ export class TradingLoop {
     }
 
     if (pendingScan && this.simpleRenkoPendingScan?.refreshAt === pendingScan.refreshAt) {
+      if (config.ST1_SCIENTIFIC_SHADOW_ENABLED) {
+        this.st1ScientificShadowState = {
+          ...this.st1ScientificShadowState,
+          calculatedAt: now,
+          breadth15m: summarizeShadowBreadth(shadowBreadthRows15m, now, { interval: '15m' })
+        };
+      }
       const directions = this.getAmbushDirectionCounts();
       const rejectionSummary = Object.fromEntries(
         [...rejectionCounts.entries()].sort((left, right) => right[1] - left[1])
@@ -1337,6 +1474,14 @@ export class TradingLoop {
     );
 
     await this.syncLiveOpenPositionsOnStart(Number.isFinite(maxPositions) ? maxPositions : DEFAULT_MAX_POSITIONS);
+    if ((process.env.APP_MODE || 'paper').toLowerCase() === 'paper') {
+      await TradeSnapshotService.reconcilePriorPaperSessionOpenSnapshots({
+        currentSessionId: this.sessionId,
+        currentSessionStartedAt: this.sessionStartedAt,
+        activeTradeIds: [...this.activePositions.values()].map((position) => position.entryOrderId),
+        now: Date.now()
+      });
+    }
     if (config.ST1_SIMPLE_RENKO_ENTRY_ENABLED === true) {
       await this.refreshSimpleRenkoUniverse(Date.now());
     }
@@ -3229,6 +3374,24 @@ export class TradingLoop {
       position.openCorrelationId = randomUUID();
       position.confirmationFeatures = confirmation?.features || null;
       position.regimePolicy = regimePolicy;
+      if (simpleRenkoEntry && config.ST1_SCIENTIFIC_SHADOW_ENABLED) {
+        try {
+          position.scientificShadow = createSt1ScientificShadow({
+            signal,
+            entryPrice,
+            enteredAt,
+            rsi: confirmation?.features?.rsi,
+            takerBuyRatio: confirmation?.features?.takerBuyRatio,
+            regimeTelemetry: this.getScientificShadowRegimeTelemetry(enteredAt),
+            settings: this.getScientificShadowSettings()
+          });
+        } catch (error) {
+          logger.warn('ST1 scientific shadow entry capture failed; entry remains active', {
+            coin,
+            error: error.message
+          });
+        }
+      }
       await this.hydratePositionPriceMetadata(position);
 
       logger.info('Position Entry', {
@@ -3249,7 +3412,8 @@ export class TradingLoop {
         emergencyStopPrice: emergencyProtection.stopPrice,
         requestedQuantity: quantity,
         executedQuantity,
-        positionFollowMode: this.getPositionFollowMode()
+        positionFollowMode: this.getPositionFollowMode(),
+        scientificShadowConfigHash: position.scientificShadow?.configHash || null
       });
 
       const ambushContext = this.ambushList.get(coin);
@@ -3285,7 +3449,9 @@ export class TradingLoop {
         positionFollowMode: this.getPositionFollowMode(),
         entryCommission,
         regimePolicy,
-        appVersion: process.env.GITHUB_SHA || process.env.COMMIT_SHA || 'unknown',
+        scientificShadow: position.scientificShadow || null,
+        appVersion: config.APP_VERSION,
+        commitSha: process.env.GITHUB_SHA || process.env.COMMIT_SHA || null,
         openCorrelationId: position.openCorrelationId,
         entryReason: [
           ambushContext?.readyReason || null,
@@ -3362,6 +3528,13 @@ export class TradingLoop {
       const fallbackPrice = Number(candle.close);
       const hasCurrentPriceOverride = Number.isFinite(Number(currentPriceOverride)) && Number(currentPriceOverride) > 0;
       const exitPrice = hasCurrentPriceOverride ? Number(currentPriceOverride) : fallbackPrice;
+      let shadowAtrValue = null;
+      try {
+        shadowAtrValue = this.calculateAtrValue(recentCandles, this.resolveAtrPeriod());
+      } catch {
+        // Shadow telemetry is best-effort and must never alter position management.
+      }
+      this.updateScientificShadowPosition(position, exitPrice, shadowAtrValue, Date.now());
 
       if (this.orderService.isLiveTradingEnabled()) {
         const livePosition = await this.orderService.getOpenPosition(position.coin);
@@ -3536,7 +3709,8 @@ export class TradingLoop {
       lowestPriceSinceEntry: Number(position.lowestPriceSinceEntry || position.entryPrice),
       followStage: position.followStage || 'INITIAL',
       btcTrend: position.btcTrend || null,
-      ethTrend: position.ethTrend || null
+      ethTrend: position.ethTrend || null,
+      scientificShadow: position.scientificShadow || null
     };
   }
 
@@ -5035,6 +5209,24 @@ export class TradingLoop {
       ? ((finalLowest - Number(position.entryPrice)) / Number(position.entryPrice)) * 100
       : ((Number(position.entryPrice) - Math.max(Number(position.highestPriceSinceEntry || position.entryPrice), Number(exitPrice))) / Number(position.entryPrice)) * 100;
     const closeCorrelationId = randomUUID();
+    let scientificShadow = position.scientificShadow || null;
+    try {
+      scientificShadow = finalizeSt1ScientificShadow(position.scientificShadow, {
+        exitTime: Date.now(),
+        exitPrice,
+        exitType: reason === 'TRAILING_TP' ? 'TRAILING' : reason,
+        grossPnlPercent: pnlPercent,
+        netPnlUsdt: netPnlForTradeSizeUsdt,
+        maxFavorableExcursionPercent,
+        maxAdverseExcursionPercent
+      });
+    } catch (error) {
+      logger.warn('ST1 scientific shadow exit capture failed; close accounting continues', {
+        coin: position.coin,
+        error: error.message
+      });
+    }
+    position.scientificShadow = scientificShadow;
 
  this.tradeStats.total += 1;
 
@@ -5154,6 +5346,7 @@ else {
       followStage: position.followStage,
       maxFavorableExcursionPercent,
       maxAdverseExcursionPercent,
+      scientificShadowConfigHash: scientificShadow?.configHash || null,
       paperWalletBalanceUsdt: this.paperWalletBalanceUsdt,
       stats: this.tradeStats
     });
@@ -5188,6 +5381,7 @@ else {
       finalFollowStage: position.followStage,
       maxFavorableExcursionPercent,
       maxAdverseExcursionPercent,
+      scientificShadow,
       closeCorrelationId,
       turnoverUsdt: positionNotionalUsdt * 2
     });

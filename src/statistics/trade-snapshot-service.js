@@ -124,6 +124,53 @@ class TradeSnapshotService {
       .catch((error) => logger.warning('Trade protection snapshot update failed', { tradeId, error: error.message }));
   }
 
+  recordResearch(tradeId, data) {
+    const indexedId = this.snapshotIndex.get(tradeId);
+    const update = (id) => this.repository.update(id, this.normalizeTelemetryPatch(data));
+    if (indexedId) {
+      update(indexedId).catch((error) => logger.warning('Trade research snapshot update failed', {
+        tradeId,
+        error: error.message
+      }));
+      return;
+    }
+    this.repository.findByTradeId(tradeId)
+      .then((existing) => existing?.id ? update(existing.id) : null)
+      .catch((error) => logger.warning('Trade research snapshot update failed', {
+        tradeId,
+        error: error.message
+      }));
+  }
+
+  async reconcilePriorPaperSessionOpenSnapshots({
+    currentSessionId,
+    currentSessionStartedAt,
+    activeTradeIds = [],
+    now = Date.now()
+  }) {
+    try {
+      const updated = await this.repository.markOrphanedPaperSnapshots({
+        currentSessionId,
+        currentSessionStartedAt,
+        activeTradeIds,
+        orphanedAt: now
+      });
+      if (updated > 0) {
+        logger.info('Prior PAPER session snapshots marked as orphaned research records', {
+          updated,
+          currentSessionId
+        });
+      }
+      return updated;
+    } catch (error) {
+      logger.warning('Prior PAPER session snapshot reconciliation failed', {
+        currentSessionId,
+        error: error.message
+      });
+      return 0;
+    }
+  }
+
   async hasOpenSnapshotFor(
     symbol,
     side,

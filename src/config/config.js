@@ -257,6 +257,14 @@ class Config {
     this.ST1_ORDERFLOW_CONFIRM_TIMEOUT_MINUTES = number('ST1_ORDERFLOW_CONFIRM_TIMEOUT_MINUTES', 3);
     this.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO = number('ST1_ORDERFLOW_LONG_MIN_BUY_RATIO', 0.58);
     this.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO = number('ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO', 0.42);
+    this.ST1_SCIENTIFIC_SHADOW_ENABLED = boolean('ST1_SCIENTIFIC_SHADOW_ENABLED', true);
+    this.ST1_SHADOW_RSI_PROXIMITY_POINTS = number('ST1_SHADOW_RSI_PROXIMITY_POINTS', 2);
+    this.ST1_SHADOW_LONG_FLOW_MAX_BUY_RATIO = number('ST1_SHADOW_LONG_FLOW_MAX_BUY_RATIO', 0.72);
+    this.ST1_SHADOW_EARLY_LOCK_TRIGGER_PERCENT = number('ST1_SHADOW_EARLY_LOCK_TRIGGER_PERCENT', 0.30);
+    this.ST1_SHADOW_COST_BUFFER_PERCENT = number('ST1_SHADOW_COST_BUFFER_PERCENT', 0.03);
+    this.ST1_SHADOW_STALE_MINUTES = number('ST1_SHADOW_STALE_MINUTES', 240);
+    this.ST1_SHADOW_STALE_MAX_MFE_PERCENT = number('ST1_SHADOW_STALE_MAX_MFE_PERCENT', 0.30);
+    this.ST1_SHADOW_REGIME_REFRESH_MS = integer('ST1_SHADOW_REGIME_REFRESH_MS', 60000);
     this.ST1_RENKO_MAX_CHASE_T = number('ST1_RENKO_MAX_CHASE_T', 0.25);
     this.ST1_BB_TOUCH_ATR_MULTIPLIER = number('ST1_BB_TOUCH_ATR_MULTIPLIER', 0.10);
     this.ST1_ENTRY_WINDOW_CANDLES = integer('ST1_ENTRY_WINDOW_CANDLES', 3);
@@ -498,6 +506,27 @@ class Config {
       || this.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO < 0
       || this.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO >= 0.5) {
       throw new Error('ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO must satisfy 0 <= ratio < 0.5');
+    }
+    for (const [name, value] of [
+      ['ST1_SHADOW_RSI_PROXIMITY_POINTS', this.ST1_SHADOW_RSI_PROXIMITY_POINTS],
+      ['ST1_SHADOW_EARLY_LOCK_TRIGGER_PERCENT', this.ST1_SHADOW_EARLY_LOCK_TRIGGER_PERCENT],
+      ['ST1_SHADOW_STALE_MINUTES', this.ST1_SHADOW_STALE_MINUTES],
+      ['ST1_SHADOW_STALE_MAX_MFE_PERCENT', this.ST1_SHADOW_STALE_MAX_MFE_PERCENT]
+    ]) {
+      if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be greater than 0`);
+    }
+    if (!Number.isFinite(this.ST1_SHADOW_LONG_FLOW_MAX_BUY_RATIO)
+      || this.ST1_SHADOW_LONG_FLOW_MAX_BUY_RATIO < this.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO
+      || this.ST1_SHADOW_LONG_FLOW_MAX_BUY_RATIO > 1) {
+      throw new Error('ST1_SHADOW_LONG_FLOW_MAX_BUY_RATIO must be between the active long minimum and 1');
+    }
+    if (!Number.isFinite(this.ST1_SHADOW_COST_BUFFER_PERCENT)
+      || this.ST1_SHADOW_COST_BUFFER_PERCENT < 0) {
+      throw new Error('ST1_SHADOW_COST_BUFFER_PERCENT must be greater than or equal to 0');
+    }
+    if (!Number.isInteger(this.ST1_SHADOW_REGIME_REFRESH_MS)
+      || this.ST1_SHADOW_REGIME_REFRESH_MS < 1000) {
+      throw new Error('ST1_SHADOW_REGIME_REFRESH_MS must be an integer greater than or equal to 1000');
     }
     if (!Number.isFinite(this.ST1_RENKO_MAX_CHASE_T) || this.ST1_RENKO_MAX_CHASE_T <= 0) {
       throw new Error('ST1_RENKO_MAX_CHASE_T must be greater than 0');

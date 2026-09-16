@@ -257,6 +257,11 @@ class Config {
     this.ST1_ORDERFLOW_CONFIRM_TIMEOUT_MINUTES = number('ST1_ORDERFLOW_CONFIRM_TIMEOUT_MINUTES', 3);
     this.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO = number('ST1_ORDERFLOW_LONG_MIN_BUY_RATIO', 0.58);
     this.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO = number('ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO', 0.42);
+    this.ST1_R433_ENTRY_GATE_ENABLED = boolean('ST1_R433_ENTRY_GATE_ENABLED', true);
+    this.ST1_R433_LONG_RSI_MINIMUM = number('ST1_R433_LONG_RSI_MINIMUM', 28);
+    this.ST1_R433_LONG_RSI_MAXIMUM_EXCLUSIVE = number('ST1_R433_LONG_RSI_MAXIMUM_EXCLUSIVE', 30);
+    this.ST1_R433_LONG_FLOW_MINIMUM = number('ST1_R433_LONG_FLOW_MINIMUM', 0.58);
+    this.ST1_R433_LONG_FLOW_MAXIMUM = number('ST1_R433_LONG_FLOW_MAXIMUM', 0.72);
     this.ST1_SCIENTIFIC_SHADOW_ENABLED = boolean('ST1_SCIENTIFIC_SHADOW_ENABLED', true);
     this.ST1_SHADOW_RSI_PROXIMITY_POINTS = number('ST1_SHADOW_RSI_PROXIMITY_POINTS', 2);
     this.ST1_SHADOW_LONG_FLOW_MAX_BUY_RATIO = number('ST1_SHADOW_LONG_FLOW_MAX_BUY_RATIO', 0.72);
@@ -506,6 +511,20 @@ class Config {
       || this.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO < 0
       || this.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO >= 0.5) {
       throw new Error('ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO must satisfy 0 <= ratio < 0.5');
+    }
+    if (!Number.isFinite(this.ST1_R433_LONG_RSI_MINIMUM)
+      || !Number.isFinite(this.ST1_R433_LONG_RSI_MAXIMUM_EXCLUSIVE)
+      || this.ST1_R433_LONG_RSI_MINIMUM < 0
+      || this.ST1_R433_LONG_RSI_MAXIMUM_EXCLUSIVE > this.ST1_RENKO_RSI_OVERSOLD
+      || this.ST1_R433_LONG_RSI_MINIMUM >= this.ST1_R433_LONG_RSI_MAXIMUM_EXCLUSIVE) {
+      throw new Error('ST1 R43.3 LONG RSI gate must satisfy 0 <= minimum < maximum <= oversold');
+    }
+    if (!Number.isFinite(this.ST1_R433_LONG_FLOW_MINIMUM)
+      || !Number.isFinite(this.ST1_R433_LONG_FLOW_MAXIMUM)
+      || this.ST1_R433_LONG_FLOW_MINIMUM < this.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO
+      || this.ST1_R433_LONG_FLOW_MINIMUM >= this.ST1_R433_LONG_FLOW_MAXIMUM
+      || this.ST1_R433_LONG_FLOW_MAXIMUM > 1) {
+      throw new Error('ST1 R43.3 LONG flow gate must stay inside the active taker-flow range');
     }
     for (const [name, value] of [
       ['ST1_SHADOW_RSI_PROXIMITY_POINTS', this.ST1_SHADOW_RSI_PROXIMITY_POINTS],

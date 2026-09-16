@@ -8,7 +8,9 @@ import {
   buildHistoricalReplayRecord,
   confirmHistoricalSetup,
   createReplayCohortReport,
-  findHistoricalRenkoSetups
+  findHistoricalRenkoSetups,
+  resolveHistoricalReplayPeriodEnd,
+  resolveHistoricalReplayRunHash
 } from '../src/research/st1-historical-replay.js';
 import { createDeterministicConfigHash } from '../src/research/st1-scientific-shadow.js';
 
@@ -33,7 +35,8 @@ const settings = {
   days: integerEnv('R432_REPLAY_DAYS', 90),
   topCoins: integerEnv('R432_REPLAY_TOP_COINS', Number(config.TOP_COINS_COUNT || 300)),
   candleLimit: integerEnv('R432_REPLAY_CANDLE_LIMIT', Number(config.ST1_RENKO_CANDLE_LIMIT || 800), 32),
-  requestDelayMs: integerEnv('R432_REPLAY_REQUEST_DELAY_MS', 300, 50),
+  requestDelayMs: integerEnv('R432_REPLAY_REQUEST_DELAY_MS', 200, 100),
+  workerConcurrency: Math.min(4, integerEnv('R432_REPLAY_CONCURRENCY', 3)),
   maximumWaitMinutes: integerEnv('R432_REPLAY_MAX_WAIT_MINUTES', 15),
   cooldownMinutes: integerEnv('R432_REPLAY_SYMBOL_COOLDOWN_MINUTES', 240),
   mainHorizonMinutes: integerEnv('R432_REPLAY_MAIN_HORIZON_MINUTES', 240),
@@ -58,12 +61,16 @@ const settings = {
   }
 };
 settings.roundTripCostPercent = settings.commissionPercent + settings.slippagePercent;
-const ANALYSIS_END_TIME = (Math.floor(Date.now() / DAY_MS) * DAY_MS) - 1;
+const ANALYSIS_END_TIME = resolveHistoricalReplayPeriodEnd(process.env.R432_REPLAY_PERIOD_END_UTC);
 const ANALYSIS_START_TIME = (ANALYSIS_END_TIME + 1) - (settings.days * DAY_MS);
 const WARMUP_START_TIME = ANALYSIS_START_TIME - (settings.candleLimit * FIFTEEN_MINUTE_MS);
 const SPLIT_TIME = ANALYSIS_START_TIME + ((ANALYSIS_END_TIME - ANALYSIS_START_TIME) * (2 / 3));
 settings.periodEndTime = ANALYSIS_END_TIME;
-settings.runHash = createDeterministicConfigHash(settings).slice(0, 16);
+const runHashOverride = resolveHistoricalReplayRunHash(process.env.R432_REPLAY_RUN_HASH);
+const scientificSettings = { ...settings };
+delete scientificSettings.requestDelayMs;
+delete scientificSettings.workerConcurrency;
+settings.runHash = runHashOverride || createDeterministicConfigHash(scientificSettings).slice(0, 16);
 
 const outputDirectory = path.join(process.cwd(), 'data', 'research');
 const cacheDirectory = path.join(outputDirectory, 'r432-cache');
@@ -72,6 +79,8 @@ const latestJsonPath = path.join(outputDirectory, 'r432-historical-replay-latest
 const latestMarkdownPath = path.join(outputDirectory, 'r432-historical-replay-latest.md');
 const baseUrl = config.getBinanceUrl();
 let lastRequestAt = 0;
+let requestSlotQueue = Promise.resolve();
+let checkpointWriteQueue = Promise.resolve();
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -82,12 +91,20 @@ async function atomicWrite(filePath, content) {
   await fs.rename(temporaryPath, filePath);
 }
 
-async function request(pathname, params = {}) {
-  let lastError;
-  for (let attempt = 1; attempt <= 6; attempt += 1) {
+async function reserveRequestSlot() {
+  const slot = requestSlotQueue.then(async () => {
     const delay = Math.max(0, settings.requestDelayMs - (Date.now() - lastRequestAt));
     if (delay > 0) await wait(delay);
     lastRequestAt = Date.now();
+  });
+  requestSlotQueue = slot.catch(() => {});
+  await slot;
+}
+
+async function request(pathname, params = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    await reserveRequestSlot();
     try {
       const response = await axios.get(`${baseUrl}${pathname}`, {
         params,
@@ -245,7 +262,10 @@ async function loadCheckpoint() {
 }
 
 async function saveCheckpoint(checkpoint) {
-  await atomicWrite(checkpointPath, JSON.stringify(checkpoint, null, 2));
+  const snapshot = JSON.stringify(checkpoint, null, 2);
+  const write = checkpointWriteQueue.then(() => atomicWrite(checkpointPath, snapshot));
+  checkpointWriteQueue = write.catch(() => {});
+  await write;
 }
 
 const formatNumber = (value, digits = 4) => value === 'INF'
@@ -302,7 +322,11 @@ async function main() {
   checkpoint.universe = universe;
   const completed = new Set(checkpoint.completedSymbols);
 
-  console.log(`R43.2 historical replay | ${settings.days} gün | ${universe.length} sembol | hash ${settings.runHash}`);
+  console.log(
+    `R43.2 historical replay | ${settings.days} gün | ${universe.length} sembol | ` +
+    `${settings.workerConcurrency} worker | bitiş ${new Date(ANALYSIS_END_TIME).toISOString()} | hash ${settings.runHash}`
+  );
+  const pendingJobs = [];
   for (let index = 0; index < universe.length; index += 1) {
     const symbol = universe[index];
     if (completed.has(symbol)) {
@@ -310,61 +334,84 @@ async function main() {
       continue;
     }
 
-    try {
-      const candles15m = await fetchCachedFifteenMinuteCandles(symbol, WARMUP_START_TIME, ANALYSIS_END_TIME);
-      const setups = findHistoricalRenkoSetups(candles15m, {
-        candleLimit: settings.candleLimit,
-        analysisStartTime: ANALYSIS_START_TIME,
-        sourceInterval: '15m',
-        atrPeriod: Number(config.ST1_RENKO_ATR_PERIOD),
-        bollingerPeriod: Number(config.ST1_RENKO_BOLLINGER_PERIOD),
-        bollingerStdDev: Number(config.ST1_RENKO_BOLLINGER_STD_DEV),
-        bandToleranceT: Number(config.ST1_RENKO_BB_TOUCH_TOLERANCE_T),
-        rsiPeriod: Number(config.ST1_RENKO_RSI_PERIOD),
-        rsiMaximum: Number(config.ST1_RENKO_RSI_OVERSOLD),
-        rsiMinimum: Number(config.ST1_RENKO_RSI_OVERBOUGHT),
-        entryOffsetT: Number(config.ST1_RENKO_ENTRY_OFFSET_T),
-        maxBricks: Number(config.ST1_RENKO_MAX_BRICKS)
-      });
-      const candles1m = setups.length
-        ? await fetchOneMinuteWindows(symbol, setups, ANALYSIS_END_TIME)
-        : [];
-      let confirmedCount = 0;
-      let lastAcceptedEntryTime = Number.NEGATIVE_INFINITY;
-
-      for (const setup of setups) {
-        const minuteWindow = getSetupMinuteWindow(candles1m, setup);
-        const confirmation = confirmHistoricalSetup(setup, minuteWindow, {
-          ...settings.orderFlow,
-          maximumWaitMinutes: settings.maximumWaitMinutes
-        });
-        if (!confirmation.confirmed) continue;
-        if (confirmation.entryTime - lastAcceptedEntryTime < settings.cooldownMinutes * MINUTE_MS) continue;
-
-        checkpoint.records.push(buildHistoricalReplayRecord({
-          symbol,
-          setup,
-          confirmation,
-          oneMinuteCandles: minuteWindow,
-          horizonsMinutes: settings.horizonsMinutes,
-          roundTripCostPercent: settings.roundTripCostPercent,
-          notionalUsdt: settings.notionalUsdt,
-          candidateSettings: settings.candidates
-        }));
-        lastAcceptedEntryTime = confirmation.entryTime;
-        confirmedCount += 1;
-      }
-
-      checkpoint.completedSymbols.push(symbol);
-      completed.add(symbol);
-      await saveCheckpoint(checkpoint);
-      console.log(`[${index + 1}/${universe.length}] ${symbol} | 15m=${candles15m.length} | pusu=${setups.length} | giriş=${confirmedCount}`);
-    } catch (error) {
-      checkpoint.failures.push({ symbol, at: Date.now(), error: error.message });
-      await saveCheckpoint(checkpoint);
-      console.error(`[${index + 1}/${universe.length}] ${symbol} HATA: ${error.message}`);
-    }
+    pendingJobs.push({ index, symbol });
   }
+
+  let nextJobIndex = 0;
+  const runWorker = async () => {
+    while (nextJobIndex < pendingJobs.length) {
+      const job = pendingJobs[nextJobIndex];
+      nextJobIndex += 1;
+      const { index, symbol } = job;
+
+      try {
+        const candles15m = await fetchCachedFifteenMinuteCandles(symbol, WARMUP_START_TIME, ANALYSIS_END_TIME);
+        const setups = findHistoricalRenkoSetups(candles15m, {
+          candleLimit: settings.candleLimit,
+          analysisStartTime: ANALYSIS_START_TIME,
+          sourceInterval: '15m',
+          atrPeriod: Number(config.ST1_RENKO_ATR_PERIOD),
+          bollingerPeriod: Number(config.ST1_RENKO_BOLLINGER_PERIOD),
+          bollingerStdDev: Number(config.ST1_RENKO_BOLLINGER_STD_DEV),
+          bandToleranceT: Number(config.ST1_RENKO_BB_TOUCH_TOLERANCE_T),
+          rsiPeriod: Number(config.ST1_RENKO_RSI_PERIOD),
+          rsiMaximum: Number(config.ST1_RENKO_RSI_OVERSOLD),
+          rsiMinimum: Number(config.ST1_RENKO_RSI_OVERBOUGHT),
+          entryOffsetT: Number(config.ST1_RENKO_ENTRY_OFFSET_T),
+          maxBricks: Number(config.ST1_RENKO_MAX_BRICKS)
+        });
+        const candles1m = setups.length
+          ? await fetchOneMinuteWindows(symbol, setups, ANALYSIS_END_TIME)
+          : [];
+        let confirmedCount = 0;
+        let lastAcceptedEntryTime = Number.NEGATIVE_INFINITY;
+
+        for (const setup of setups) {
+          const minuteWindow = getSetupMinuteWindow(candles1m, setup);
+          const confirmation = confirmHistoricalSetup(setup, minuteWindow, {
+            ...settings.orderFlow,
+            maximumWaitMinutes: settings.maximumWaitMinutes
+          });
+          if (!confirmation.confirmed) continue;
+          if (confirmation.entryTime - lastAcceptedEntryTime < settings.cooldownMinutes * MINUTE_MS) continue;
+
+          checkpoint.records.push(buildHistoricalReplayRecord({
+            symbol,
+            setup,
+            confirmation,
+            oneMinuteCandles: minuteWindow,
+            horizonsMinutes: settings.horizonsMinutes,
+            roundTripCostPercent: settings.roundTripCostPercent,
+            notionalUsdt: settings.notionalUsdt,
+            candidateSettings: settings.candidates
+          }));
+          lastAcceptedEntryTime = confirmation.entryTime;
+          confirmedCount += 1;
+        }
+
+        checkpoint.completedSymbols.push(symbol);
+        completed.add(symbol);
+        await saveCheckpoint(checkpoint);
+        console.log(`[${index + 1}/${universe.length}] ${symbol} | 15m=${candles15m.length} | pusu=${setups.length} | giriş=${confirmedCount}`);
+      } catch (error) {
+        checkpoint.failures.push({ symbol, at: Date.now(), error: error.message });
+        await saveCheckpoint(checkpoint);
+        console.error(`[${index + 1}/${universe.length}] ${symbol} HATA: ${error.message}`);
+      }
+    }
+  };
+
+  const workerCount = Math.min(settings.workerConcurrency, pendingJobs.length || 1);
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  await checkpointWriteQueue;
+
+  const universeOrder = new Map(universe.map((symbol, index) => [symbol, index]));
+  const completedSymbols = [...new Set(checkpoint.completedSymbols)]
+    .sort((left, right) => universeOrder.get(left) - universeOrder.get(right));
+  const records = [...checkpoint.records].sort((left, right) => (
+    Number(left.entryTime) - Number(right.entryTime)
+    || String(left.symbol).localeCompare(String(right.symbol))
+  ));
 
   const result = {
     schemaVersion: 1,
@@ -375,10 +422,11 @@ async function main() {
     settings,
     period: { startTime: ANALYSIS_START_TIME, splitTime: SPLIT_TIME, endTime: ANALYSIS_END_TIME },
     universe,
-    completedSymbols: checkpoint.completedSymbols,
+    checkpointHashOverrideUsed: Boolean(runHashOverride),
+    completedSymbols,
     failures: checkpoint.failures,
-    records: checkpoint.records,
-    cohorts: createReplayCohortReport(checkpoint.records, {
+    records,
+    cohorts: createReplayCohortReport(records, {
       horizonMinutes: settings.mainHorizonMinutes,
       splitTime: SPLIT_TIME
     })

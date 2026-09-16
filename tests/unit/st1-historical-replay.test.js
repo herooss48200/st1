@@ -3,6 +3,8 @@ import {
   calculateForwardOutcomes,
   confirmHistoricalSetup,
   createReplayCohortReport,
+  resolveHistoricalReplayPeriodEnd,
+  resolveHistoricalReplayRunHash,
   summarizeReplayRecords
 } from '../../src/research/st1-historical-replay.js';
 
@@ -19,6 +21,14 @@ const flowCandle = (closeTime, close, takerRatio = 0.7) => ({
 });
 
 describe('ST1 R43.2 historical replay', () => {
+  test('pins a UTC period end and validates an explicit checkpoint hash', () => {
+    expect(new Date(resolveHistoricalReplayPeriodEnd('2026-09-13')).toISOString())
+      .toBe('2026-09-13T23:59:59.999Z');
+    expect(resolveHistoricalReplayRunHash('D7AB2EEC0A9818C9')).toBe('d7ab2eec0a9818c9');
+    expect(() => resolveHistoricalReplayPeriodEnd('2026-02-31')).toThrow('geçerli');
+    expect(() => resolveHistoricalReplayRunHash('wrong-hash')).toThrow('hexadecimal');
+  });
+
   test('replays reset, fresh cross and two closed 1m flow confirmations', () => {
     const readyAt = 1_000_000;
     const setup = {

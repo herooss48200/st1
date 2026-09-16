@@ -12,6 +12,30 @@ const round = (value, digits = 8) => {
   return Number.isFinite(number) ? Number(number.toFixed(digits)) : null;
 };
 const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+
+export function resolveHistoricalReplayPeriodEnd(value, now = Date.now()) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return (Math.floor(now / DAY_MS) * DAY_MS) - 1;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    throw new Error('R432_REPLAY_PERIOD_END_UTC YYYY-MM-DD biçiminde olmalı.');
+  }
+  const startOfDay = Date.parse(`${normalized}T00:00:00.000Z`);
+  if (!Number.isFinite(startOfDay)
+    || new Date(startOfDay).toISOString().slice(0, 10) !== normalized) {
+    throw new Error('R432_REPLAY_PERIOD_END_UTC geçerli bir UTC tarihi olmalı.');
+  }
+  return startOfDay + DAY_MS - 1;
+}
+
+export function resolveHistoricalReplayRunHash(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (!/^[a-f0-9]{16,64}$/.test(normalized)) {
+    throw new Error('R432_REPLAY_RUN_HASH 16-64 karakter hexadecimal olmalı.');
+  }
+  return normalized;
+}
 
 const median = (values) => {
   if (!values.length) return null;

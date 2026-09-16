@@ -88,22 +88,25 @@ describe('ST1 R43.1 real Renko scan reporting', () => {
     expect(loop.simpleRenkoPendingScan).toBeNull();
   });
 
-  test('entry funnel snapshot exposes R43.1 crossing and two flow stages', () => {
+  test('entry funnel snapshot exposes R43.3 crossing, flow and scientific gate stages', () => {
     const loop = buildLoop(Date.now());
     loop.markEntryFunnelStage('BUY', 'freshCross', 'AAAUSDT');
     loop.markEntryFunnelStage('BUY', 'orderFlow1', 'AAAUSDT');
     loop.markEntryFunnelStage('BUY', 'orderFlow2', 'AAAUSDT');
+    loop.markEntryFunnelStage('BUY', 'scientificGate', 'AAAUSDT');
 
     const snapshot = loop.getEntryFunnelSnapshot();
     expect(snapshot.LONG).toMatchObject({
       freshCross: 1,
       orderFlow1: 1,
-      orderFlow2: 1
+      orderFlow2: 1,
+      scientificGate: 1
     });
     expect(snapshot.SHORT).toMatchObject({
       freshCross: 0,
       orderFlow1: 0,
-      orderFlow2: 0
+      orderFlow2: 0,
+      scientificGate: 0
     });
   });
 });

@@ -331,6 +331,8 @@ ${typeEmoji} Tip: <code>${triggerType}</code>
       ST1_RENKO_LAST_BRICK_NOT_GREEN: 'Son tuğla yeşil değil',
       ST1_RENKO_RSI_NOT_BELOW_30: 'Long RSI 30 altına inmedi',
       ST1_RENKO_RSI_NOT_ABOVE_70: 'Short RSI 70 üstüne çıkmadı',
+      ST1_R433_LONG_RSI_OUTSIDE_28_30: 'R43.3 Long RSI 28–30 dışında',
+      ST1_R433_SHORT_DISABLED_BY_90D_REPLAY: 'R43.3 Short 90 günlük replay kararıyla kapalı',
       ST1_RENKO_LOWER_BB_NOT_REACHED: 'Long alt Bollinger teması yok',
       ST1_RENKO_UPPER_BB_NOT_REACHED: 'Short üst Bollinger teması yok',
       ST1_RENKO_CANDLE_FETCH_FAILED: '15m mum verisi alınamadı',
@@ -383,9 +385,9 @@ ${typeEmoji} Tip: <code>${triggerType}</code>
 ━━━━━━━━━━━━━━━━━━━━
 🕐 Saat: ${new Date().toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' })}
 ⏱️ Kaynak: <code>kapanmış 15m mumlardan Renko</code>
-🟢 Long: <code>kırmızı tuğla + RSI &lt; 30 + alt BB</code>
-🔴 Short: <code>yeşil tuğla + RSI &gt; 70 + üst BB</code>
-🎯 Tetik: <code>Long high + 0.25T / Short low - 0.25T</code>
+🟢 Long: <code>kırmızı tuğla + RSI 28–30 + alt BB + taker 0.58–0.72</code>
+🔴 Short: <code>90 günlük replay kararıyla yeni giriş kapalı</code>
+🎯 Tetik: <code>Long high + 0.25T</code>
 📚 Hedef Coin: <code>${targetCoins}</code>
 📥 Alınan Coin: <code>${fetchedCoins}</code>
 ✅ Taranan Coin: <code>${scannedCoins}</code>
@@ -472,10 +474,10 @@ ${breadthText}
     const riskSide = r.riskSide || 'YOK';
     const simpleRenko = this.config.ST1_SIMPLE_RENKO_ENTRY_ENABLED === true;
     const rescueEnabled = this.config.ST1_RESCUE_RADAR_ENABLED === true;
-    const title = simpleRenko ? 'ST1 R43.1 GİRİŞ HUNİSİ' : 'ST1 GİRİŞ + KURTARMA RADARI';
+    const title = simpleRenko ? 'ST1 R43.3 LONG EDGE GİRİŞ HUNİSİ' : 'ST1 GİRİŞ + KURTARMA RADARI';
     const funnelText = simpleRenko
-      ? `🟢 LONG: Pusu <code>${pusu.LONG || 0}</code> → 1m Kesişim <code>${long.freshCross || 0}</code> → Flow-1 <code>${long.orderFlow1 || 0}</code> → Flow-2 <code>${long.orderFlow2 || 0}</code> → Risk <code>${long.risk || 0}</code> → Açılan <code>${long.opened || 0}</code>
-🔴 SHORT: Pusu <code>${pusu.SHORT || 0}</code> → 1m Kesişim <code>${short.freshCross || 0}</code> → Flow-1 <code>${short.orderFlow1 || 0}</code> → Flow-2 <code>${short.orderFlow2 || 0}</code> → Risk <code>${short.risk || 0}</code> → Açılan <code>${short.opened || 0}</code>`
+      ? `🟢 LONG: Pusu <code>${pusu.LONG || 0}</code> → 1m Kesişim <code>${long.freshCross || 0}</code> → Flow-1 <code>${long.orderFlow1 || 0}</code> → Flow-2 <code>${long.orderFlow2 || 0}</code> → R43.3 <code>${long.scientificGate || 0}</code> → Risk <code>${long.risk || 0}</code> → Açılan <code>${long.opened || 0}</code>
+🔴 SHORT: Replay kararıyla yeni girişler <code>KAPALI</code>`
       : `🟢 LONG: Pusu <code>${pusu.LONG || 0}</code> → Setup <code>${long.setup || 0}</code> → BodyBreak <code>${long.bodyBreak || 0}</code> → Coin EMA/ST <code>${long.coinDirection || 0}</code> → BTC/ETH <code>${long.trendGuard || 0}</code> → Breadth <code>${long.breadth || 0}</code> → Risk <code>${long.risk || 0}</code> → Açılan <code>${long.opened || 0}</code>
 🔴 SHORT: Pusu <code>${pusu.SHORT || 0}</code> → Setup <code>${short.setup || 0}</code> → BodyBreak <code>${short.bodyBreak || 0}</code> → Coin EMA/ST <code>${short.coinDirection || 0}</code> → BTC/ETH <code>${short.trendGuard || 0}</code> → Breadth <code>${short.breadth || 0}</code> → Risk <code>${short.risk || 0}</code> → Açılan <code>${short.opened || 0}</code>`;
     const rescueText = rescueEnabled
@@ -493,7 +495,7 @@ Açık SHORT: <code>${m.managedShortCount || 0}</code> | Negatif: <code>${fmt((m
 
 ℹ️ NORMAL/YELLOW/ORANGE: gözlem. RED: yalnız PAPER riskli sepeti kapatır ve RECOVERY kilidi uygular.`
       : `🛡️ <b>KURTARMA RADARI — KAPALI</b>
-R43.1 girişlerine, açık PAPER pozisyonlarına ve çıkış yönetimine müdahale etmez.`;
+R43.3 girişlerine, açık PAPER pozisyonlarına ve çıkış yönetimine müdahale etmez.`;
 
     const text = `🔬 <b>${title}</b>
 ━━━━━━━━━━━━━━━━━━━━

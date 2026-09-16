@@ -149,7 +149,7 @@ describe('NotificationService ambush summary formatting', () => {
     expect(message).toContain('15m mum verisi alınamadı: <code>1</code>');
   });
 
-  test('R43.1 funnel shows the real order-flow stages and rescue radar as disabled', async () => {
+  test('R43.3 funnel shows replay gate, disabled SHORT and rescue radar as disabled', async () => {
     const sendSpy = jest.spyOn(notificationService, 'sendMessage').mockResolvedValue(true);
     const previousTelegramEnabled = notificationService.config.ENABLE_TELEGRAM;
     notificationService.config.ENABLE_TELEGRAM = true;
@@ -158,7 +158,7 @@ describe('NotificationService ambush summary formatting', () => {
       await notificationService.sendSt1EntryAndRescueRadar({
         funnel: {
           pusu: { LONG: 8, SHORT: 3 },
-          LONG: { freshCross: 4, orderFlow1: 3, orderFlow2: 2, risk: 2, opened: 1 },
+          LONG: { freshCross: 4, orderFlow1: 3, orderFlow2: 2, scientificGate: 1, risk: 1, opened: 1 },
           SHORT: { freshCross: 2, orderFlow1: 1, orderFlow2: 1, risk: 1, opened: 1 },
           recentRejections: []
         },
@@ -169,10 +169,12 @@ describe('NotificationService ambush summary formatting', () => {
     }
 
     const message = sendSpy.mock.calls[0][0];
-    expect(message).toContain('ST1 R43.1 GİRİŞ HUNİSİ');
+    expect(message).toContain('ST1 R43.3 LONG EDGE GİRİŞ HUNİSİ');
     expect(message).toContain('1m Kesişim <code>4</code>');
     expect(message).toContain('Flow-1 <code>3</code>');
     expect(message).toContain('Flow-2 <code>2</code>');
+    expect(message).toContain('R43.3 <code>1</code>');
+    expect(message).toContain('SHORT: Replay kararıyla yeni girişler <code>KAPALI</code>');
     expect(message).toContain('KURTARMA RADARI — KAPALI');
     expect(message).not.toContain('Coin EMA/ST');
     expect(message).not.toContain('BTC/ETH');

@@ -23,6 +23,11 @@ import {
   summarizeShadowBreadth,
   updateSt1ScientificShadow
 } from './research/st1-scientific-shadow.js';
+import {
+  ST1_R433_ENTRY_POLICY,
+  evaluateSt1R433EntryGate,
+  evaluateSt1R433SetupGate
+} from './engines/st1-r433-entry-gate.js';
 
 const STRATEGY_CANDLE_INTERVAL_MS = config.STRATEGY_CANDLE_INTERVAL_MS;
 const BTC_SYMBOL = config.BTC_SYMBOL;
@@ -213,7 +218,7 @@ export class TradingLoop {
   createEntryFunnelWindow() {
     const makeSide = () => ({
       setup: new Set(), freshCross: new Set(), orderFlow1: new Set(), orderFlow2: new Set(),
-      bodyBreak: new Set(), coinDirection: new Set(), trendGuard: new Set(), breadth: new Set(),
+      scientificGate: new Set(), bodyBreak: new Set(), coinDirection: new Set(), trendGuard: new Set(), breadth: new Set(),
       risk: new Set(), opened: new Set()
     });
     return { startedAt: Date.now(), LONG: makeSide(), SHORT: makeSide(), rejections: new Map() };
@@ -245,7 +250,7 @@ export class TradingLoop {
       counts[side] = {};
       const src = this.entryFunnelWindow?.[side] || {};
       for (const stage of [
-        'setup', 'freshCross', 'orderFlow1', 'orderFlow2', 'bodyBreak',
+        'setup', 'freshCross', 'orderFlow1', 'orderFlow2', 'scientificGate', 'bodyBreak',
         'coinDirection', 'trendGuard', 'breadth', 'risk', 'opened'
       ]) {
         counts[side][stage] = src[stage] instanceof Set ? src[stage].size : 0;
@@ -581,6 +586,16 @@ export class TradingLoop {
     };
   }
 
+  getSt1R433EntryGateOptions() {
+    return {
+      enabled: config.ST1_R433_ENTRY_GATE_ENABLED,
+      longRsiMinimum: config.ST1_R433_LONG_RSI_MINIMUM,
+      longRsiMaximumExclusive: config.ST1_R433_LONG_RSI_MAXIMUM_EXCLUSIVE,
+      longFlowMinimum: config.ST1_R433_LONG_FLOW_MINIMUM,
+      longFlowMaximum: config.ST1_R433_LONG_FLOW_MAXIMUM
+    };
+  }
+
   invalidateSimpleRenkoSetup(coin, ambush, reason, details = {}) {
     const signature = ambush?.st1Setup?.setupSignature;
     if (signature) this.st1RenkoInvalidatedSetupSignatures.set(coin, signature);
@@ -745,7 +760,7 @@ export class TradingLoop {
       targetCoins,
       fetchedCoins: symbols.length,
       strategy: '15M_RENKO_RSI_BOLLINGER_0_25T',
-      entryGates: 'NONE_BEYOND_SIGNAL_AND_OPERATIONAL_SAFETY',
+      entryGates: config.ST1_R433_ENTRY_GATE_ENABLED ? ST1_R433_ENTRY_POLICY : 'DISABLED',
       currentAmbushes: this.ambushList.size,
       currentLongAmbushes: directions.longCount,
       currentShortAmbushes: directions.shortCount,
@@ -757,6 +772,7 @@ export class TradingLoop {
     await this.refreshScientificShadowTrend(now);
     const options = this.getSimpleRenkoOptions();
     const orderFlowOptions = this.getSimpleRenkoOrderFlowOptions();
+    const r433GateOptions = this.getSt1R433EntryGateOptions();
     const candleLimit = Number(config.ST1_RENKO_CANDLE_LIMIT);
     const pendingScan = this.simpleRenkoPendingScan;
     let scannedCoins = 0;
@@ -824,6 +840,14 @@ export class TradingLoop {
         continue;
       }
 
+      const setupGate = evaluateSt1R433SetupGate({ signal: setup.signal, rsi: setup.rsi }, r433GateOptions);
+      if (!setupGate.allowed) {
+        countRejection(setupGate.reason);
+        this.markEntryFunnelRejection(setup.signal, coin, setupGate.reason);
+        if (ambush) this.ambushList.delete(coin);
+        continue;
+      }
+
       if (Number(setup.setupCloseTime) <= Number(this.st1RenkoLastExecutedSetupCloseTimes.get(coin) || 0)) {
         continue;
       }
@@ -879,6 +903,8 @@ export class TradingLoop {
           orderFlowWindowCandles: orderFlowOptions.windowCandles,
           orderFlowRequiredConfirmations: orderFlowOptions.requiredConfirmations,
           longMinimumBuyRatio: orderFlowOptions.longMinimumBuyRatio,
+          longMaximumBuyRatio: r433GateOptions.longFlowMaximum,
+          entryPolicy: ST1_R433_ENTRY_POLICY,
           shortMaximumBuyRatio: orderFlowOptions.shortMaximumBuyRatio,
           maxChaseT: orderFlowOptions.maxChaseT
         });
@@ -1011,12 +1037,25 @@ export class TradingLoop {
         continue;
       }
 
+      const entryGate = evaluateSt1R433EntryGate({
+        signal: setup.signal,
+        rsi: setup.rsi,
+        takerBuyRatio: flow.takerBuyRatio
+      }, r433GateOptions);
+      if (!entryGate.allowed) {
+        this.invalidateSimpleRenkoSetup(coin, ambush, entryGate.reason, {
+          rsi: setup.rsi,
+          takerBuyRatio: flow.takerBuyRatio,
+          policy: ST1_R433_ENTRY_POLICY
+        });
+        continue;
+      }
+      this.markEntryFunnelStage(setup.signal, 'scientificGate', coin);
+
       this.markEntryFunnelStage(setup.signal, 'bodyBreak', coin);
       const confirmation = {
         confirmed: true,
-        reason: setup.signal === 'BUY'
-          ? 'ST1_LONG_FRESH_CROSS_3M_TAKER_FLOW_CONFIRMED'
-          : 'ST1_SHORT_FRESH_CROSS_3M_TAKER_FLOW_CONFIRMED',
+        reason: 'ST1_R433_LONG_RSI_FLOW_REPLAY_CONFIRMED',
         features: {
           st1SimpleRenko: true,
           sourceInterval: options.sourceInterval,
@@ -1035,7 +1074,9 @@ export class TradingLoop {
           orderFlowConfirmations: flowState.confirmationCount,
           takerBuyRatio: flow.takerBuyRatio,
           normalizedDelta: flow.normalizedDelta,
-          maxChaseT: orderFlowOptions.maxChaseT
+          maxChaseT: orderFlowOptions.maxChaseT,
+          entryPolicy: entryGate.policy,
+          replayConfirmed: true
         }
       };
 
@@ -1469,7 +1510,7 @@ export class TradingLoop {
       'Trading Loop Active (24/7)\n' +
       `Mode: ${modeLabel}\n` +
       (config.ST1_SIMPLE_RENKO_ENTRY_ENABLED
-        ? 'Strategy: 15m Renko | LONG RSI<30 / SHORT RSI>70 | BB + 0.25T'
+        ? 'Strategy: R43.3 LONG-only | 15m Renko RSI 28-30 | taker 0.58-0.72 | BB + 0.25T'
         : `Strategy scan: 15m candle closes + ${this.resolveStrategyCandleCloseDelayMs() / 1000}s`)
     );
 
@@ -3276,8 +3317,9 @@ export class TradingLoop {
       }
       this.markEntryFunnelStage(signal, 'risk', coin);
 
-      // R43.1 reaches this point only after the 15m Renko RSI/BB setup, a fresh
-      // closed 1m crossing and two aligned rolling 3m taker-flow confirmations.
+      // R43.3 reaches this point only after the 15m Renko RSI/BB setup, a fresh
+      // closed 1m crossing, two aligned rolling 3m taker-flow confirmations and
+      // the replay-confirmed LONG RSI 28-30 + taker ratio 0.58-0.72 gate.
 
       const orderResult = await this.orderService.placeOrder({
         symbol: coin,

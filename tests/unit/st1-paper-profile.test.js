@@ -1,7 +1,7 @@
 import { TradingLoop } from '../../src/trading-loop.js';
 import config from '../../src/config/config.js';
 
-describe('ST1 R43.2 PAPER-only scientific shadow profile', () => {
+describe('ST1 R43.3 PAPER-only replay-confirmed LONG profile', () => {
   test('uses 50 USDT cap, 300-coin universe and unlimited aggregate PAPER slots', () => {
     expect(config.TRADE_SIZE_USDT).toBe(50);
     expect(config.TOP_COINS_COUNT).toBe(300);
@@ -32,7 +32,7 @@ describe('ST1 R43.2 PAPER-only scientific shadow profile', () => {
     expect(config.ENABLE_REAL_TRADING).toBe(false);
     expect(config.ST1_PAPER_ONLY).toBe(true);
     expect(config.LEVERAGE).toBe(10);
-    expect(config.APP_VERSION).toBe('ST1-R43.2-SCIENTIFIC-SHADOW');
+    expect(config.APP_VERSION).toBe('ST1-R43.3-LONG-RSI-FLOW-PAPER');
     expect(config.ST1_SIMPLE_RENKO_ENTRY_ENABLED).toBe(true);
     expect(config.ST1_RENKO_SOURCE_INTERVAL).toBe('15m');
     expect(config.ST1_RENKO_RSI_OVERSOLD).toBe(30);
@@ -43,6 +43,11 @@ describe('ST1 R43.2 PAPER-only scientific shadow profile', () => {
     expect(config.ST1_ORDERFLOW_REQUIRED_CONFIRMATIONS).toBe(2);
     expect(config.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO).toBeCloseTo(0.58, 12);
     expect(config.ST1_ORDERFLOW_SHORT_MAX_BUY_RATIO).toBeCloseTo(0.42, 12);
+    expect(config.ST1_R433_ENTRY_GATE_ENABLED).toBe(true);
+    expect(config.ST1_R433_LONG_RSI_MINIMUM).toBe(28);
+    expect(config.ST1_R433_LONG_RSI_MAXIMUM_EXCLUSIVE).toBe(30);
+    expect(config.ST1_R433_LONG_FLOW_MINIMUM).toBeCloseTo(0.58, 12);
+    expect(config.ST1_R433_LONG_FLOW_MAXIMUM).toBeCloseTo(0.72, 12);
     expect(config.ST1_SCIENTIFIC_SHADOW_ENABLED).toBe(true);
     expect(config.ST1_SHADOW_RSI_PROXIMITY_POINTS).toBe(2);
     expect(config.ST1_SHADOW_LONG_FLOW_MAX_BUY_RATIO).toBeCloseTo(0.72, 12);

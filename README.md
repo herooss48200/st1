@@ -1,10 +1,10 @@
 # ST1 — Binance Futures PAPER Strategy
 
-ST1 is the separate Node.js strategy project for Binance USDT-M Futures. R43.3 is intentionally and technically PAPER-only. Its replay-confirmed entry contract is: LONG-only closed 15m-source Renko brick + RSI [28,30) + lower Bollinger setup → fresh closed 1m crossing of the 0.25T trigger → two rolling three-minute taker-flow confirmations with taker buy ratio [0.58,0.72]. New SHORT entries are disabled by the 90-day out-of-sample result. The Renko scan summary includes condition rejection counts. LIVE and TESTNET startup paths are locked.
+ST1 is the separate Node.js strategy project for Binance USDT-M Futures. R43.8 runs the replay-confirmed R43.3 CORE as the only exchange-authorized lane: LONG-only closed 15m-source Renko brick + RSI [28,30) + lower Bollinger setup → fresh closed 1m crossing of the 0.25T trigger → two rolling three-minute taker-flow confirmations with taker buy ratio [0.58,0.72]. The additive RSI [26,27) lane is SHADOW-only and records virtual results without submitting Binance orders. RSI [27,28) and all new SHORT entries remain closed. Default startup remains PAPER; LIVE requires explicit environment variables and preflight checks.
 
 Position follow-up defaults to `STAGED_R_ATR`: entry-to-stop distance is recorded as 1R, commission-adjusted break-even requires both the configured R and ATR thresholds, and trailing starts at 1.5R. The Chandelier stop uses the true highest/lowest observed price since entry. Its distance is 2.25 ATR for aligned BTC/ETH trends, 1.75 ATR normally, and 1.25 ATR when they diverge. The former moving take-profit behavior remains available only through `POSITION_FOLLOW_MODE=LEGACY`.
 
-> Trading software carries financial risk. This release can only create simulated PAPER orders.
+> Trading software carries financial risk. R43.8 can submit real CORE orders only when LIVE is explicitly enabled; the additive lane remains virtual-only.
 
 ## Current architecture
 
@@ -33,7 +33,7 @@ The authoritative list of settings and descriptions is [.env.example](.env.examp
 
 - Node.js 20 recommended (minimum supported: Node.js 18)
 - npm
-- Binance API credentials are not required for this PAPER-only release
+- Binance API credentials are not required for PAPER/SHADOW; LIVE requires Futures credentials
 - Docker / Docker Compose only when container deployment is used
 
 ## Setup
@@ -73,7 +73,7 @@ npm run test:coverage
 npm run build
 ```
 
-`npm run live` and `npm run testnet` intentionally terminate with the PAPER-only safety error.
+`npm run live` requires explicit LIVE flags, credentials, and a successful R43.8 preflight. The default `npm start` profile remains PAPER.
 
 ## Deterministic tests
 

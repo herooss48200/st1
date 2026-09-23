@@ -262,6 +262,20 @@ class Config {
     this.ST1_R433_LONG_RSI_MAXIMUM_EXCLUSIVE = number('ST1_R433_LONG_RSI_MAXIMUM_EXCLUSIVE', 30);
     this.ST1_R433_LONG_FLOW_MINIMUM = number('ST1_R433_LONG_FLOW_MINIMUM', 0.58);
     this.ST1_R433_LONG_FLOW_MAXIMUM = number('ST1_R433_LONG_FLOW_MAXIMUM', 0.72);
+    this.ST1_R438_SHADOW_ENABLED = boolean('ST1_R438_SHADOW_ENABLED', true);
+    this.ST1_R438_LONG_RSI_MINIMUM = number('ST1_R438_LONG_RSI_MINIMUM', 26);
+    this.ST1_R438_LONG_RSI_MAXIMUM_EXCLUSIVE = number('ST1_R438_LONG_RSI_MAXIMUM_EXCLUSIVE', 27);
+    this.ST1_R438_LONG_FLOW_MINIMUM = number('ST1_R438_LONG_FLOW_MINIMUM', 0.58);
+    this.ST1_R438_LONG_FLOW_MAXIMUM = number('ST1_R438_LONG_FLOW_MAXIMUM', 0.72);
+    this.ST1_REJECTION_SHADOW_ENABLED = boolean('ST1_REJECTION_SHADOW_ENABLED', true);
+    this.ST1_REJECTION_SHADOW_FILE = process.env.ST1_REJECTION_SHADOW_FILE
+      || 'data/st1-rejection-shadow.jsonl';
+    this.ST1_R438_SHADOW_STATE_FILE = process.env.ST1_R438_SHADOW_STATE_FILE
+      || 'data/st1-r438-shadow-state.json';
+    this.ST1_R438_SHADOW_NOTIONAL_USDT = number('ST1_R438_SHADOW_NOTIONAL_USDT', 50);
+    this.ST1_R438_SHADOW_STOP_PERCENT = number('ST1_R438_SHADOW_STOP_PERCENT', 1.5);
+    this.ST1_R438_SHADOW_LOCK_PERCENT = number('ST1_R438_SHADOW_LOCK_PERCENT', 0.5);
+    this.ST1_R438_SHADOW_MAX_HOLD_MINUTES = integer('ST1_R438_SHADOW_MAX_HOLD_MINUTES', 1440);
     this.ST1_SCIENTIFIC_SHADOW_ENABLED = boolean('ST1_SCIENTIFIC_SHADOW_ENABLED', true);
     this.ST1_SHADOW_RSI_PROXIMITY_POINTS = number('ST1_SHADOW_RSI_PROXIMITY_POINTS', 2);
     this.ST1_SHADOW_LONG_FLOW_MAX_BUY_RATIO = number('ST1_SHADOW_LONG_FLOW_MAX_BUY_RATIO', 0.72);
@@ -525,6 +539,20 @@ class Config {
       || this.ST1_R433_LONG_FLOW_MINIMUM >= this.ST1_R433_LONG_FLOW_MAXIMUM
       || this.ST1_R433_LONG_FLOW_MAXIMUM > 1) {
       throw new Error('ST1 R43.3 LONG flow gate must stay inside the active taker-flow range');
+    }
+    if (!Number.isFinite(this.ST1_R438_LONG_RSI_MINIMUM)
+      || !Number.isFinite(this.ST1_R438_LONG_RSI_MAXIMUM_EXCLUSIVE)
+      || this.ST1_R438_LONG_RSI_MINIMUM < 0
+      || this.ST1_R438_LONG_RSI_MINIMUM >= this.ST1_R438_LONG_RSI_MAXIMUM_EXCLUSIVE
+      || this.ST1_R438_LONG_RSI_MAXIMUM_EXCLUSIVE > this.ST1_R433_LONG_RSI_MINIMUM) {
+      throw new Error('ST1 R43.8 additive RSI lane must stay below the R43.3 CORE lane');
+    }
+    if (!Number.isFinite(this.ST1_R438_LONG_FLOW_MINIMUM)
+      || !Number.isFinite(this.ST1_R438_LONG_FLOW_MAXIMUM)
+      || this.ST1_R438_LONG_FLOW_MINIMUM < this.ST1_ORDERFLOW_LONG_MIN_BUY_RATIO
+      || this.ST1_R438_LONG_FLOW_MINIMUM >= this.ST1_R438_LONG_FLOW_MAXIMUM
+      || this.ST1_R438_LONG_FLOW_MAXIMUM > 1) {
+      throw new Error('ST1 R43.8 additive flow gate must stay inside the active taker-flow range');
     }
     for (const [name, value] of [
       ['ST1_SHADOW_RSI_PROXIMITY_POINTS', this.ST1_SHADOW_RSI_PROXIMITY_POINTS],

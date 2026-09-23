@@ -4,8 +4,8 @@ import AGROS_POLICY from '../src/config/agros-policy.js';
 
 assert.equal(AGROS_POLICY.APP_MODE, 'paper');
 assert.equal(AGROS_POLICY.ENABLE_REAL_TRADING, 'false');
-assert.equal(AGROS_POLICY.ST1_PAPER_ONLY, 'true');
-assert.equal(AGROS_POLICY.APP_VERSION, 'ST1-R43.3-LONG-RSI-FLOW-PAPER');
+assert.equal(AGROS_POLICY.ST1_PAPER_ONLY, 'false');
+assert.equal(AGROS_POLICY.APP_VERSION, 'ST1-R43.8-LIVE-CORE-PLUS-SHADOW');
 assert.equal(AGROS_POLICY.LEVERAGE, '10');
 assert.equal(AGROS_POLICY.MAX_POSITIONS, '25');
 assert.equal(AGROS_POLICY.LIVE_MAX_POSITIONS_HARD_CAP, '25');
@@ -25,13 +25,17 @@ assert.equal(AGROS_POLICY.ST1_R433_LONG_RSI_MINIMUM, '28');
 assert.equal(AGROS_POLICY.ST1_R433_LONG_RSI_MAXIMUM_EXCLUSIVE, '30');
 assert.equal(AGROS_POLICY.ST1_R433_LONG_FLOW_MINIMUM, '0.58');
 assert.equal(AGROS_POLICY.ST1_R433_LONG_FLOW_MAXIMUM, '0.72');
+assert.equal(AGROS_POLICY.ST1_R438_SHADOW_ENABLED, 'true');
+assert.equal(AGROS_POLICY.ST1_R438_LONG_RSI_MINIMUM, '26');
+assert.equal(AGROS_POLICY.ST1_R438_LONG_RSI_MAXIMUM_EXCLUSIVE, '27');
+assert.equal(AGROS_POLICY.ST1_REJECTION_SHADOW_ENABLED, 'true');
 assert.equal(AGROS_POLICY.ST1_SCIENTIFIC_SHADOW_ENABLED, 'true');
 
 const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 assert.match(packageJson.scripts.paper, /APP_MODE=paper/);
 assert.match(packageJson.scripts.paper, /ENABLE_REAL_TRADING=false/);
-assert.match(packageJson.scripts.live, /paper-only-guard/);
-assert.doesNotMatch(packageJson.scripts.live, /ENABLE_REAL_TRADING=true/);
+assert.match(packageJson.scripts.live, /r438-live-preflight/);
+assert.match(packageJson.scripts.live, /ENABLE_REAL_TRADING=true/);
 
 const orderSource = fs.readFileSync(new URL('../src/services/order-service.js', import.meta.url), 'utf8');
 assert.match(orderSource, /LIVE_TOTAL_NOTIONAL_HARD_CAP/);
@@ -43,5 +47,7 @@ assert.match(loopSource, /LIVE_START_POSITION_CAP_EXCEEDED/);
 assert.match(loopSource, /throw error;\s*\n\s*}\s*\n\s*}\s*\n\s*async fetchLiveOpenPositions/);
 assert.match(loopSource, /schema: 2/);
 assert.match(loopSource, /riskTradeHistory: this\.riskTradeHistory\.slice\(0, 5000\)/);
+assert.match(loopSource, /entryGate\.executionAuthority === 'SHADOW_ONLY'/);
+assert.match(loopSource, /openR438ShadowPosition/);
 
-console.log('✅ R43.3 PAPER-only self-test passed | replay-confirmed LONG gate | SHORT disabled | LIVE locked');
+console.log('✅ R43.8 hybrid self-test passed | CORE live-capable | additive SHADOW-only | SHORT disabled');

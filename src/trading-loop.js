@@ -25,9 +25,12 @@ import {
 } from './research/st1-scientific-shadow.js';
 import {
   ST1_R433_ENTRY_POLICY,
+  ST1_R438_ADDITIVE_POLICY,
   evaluateSt1R433EntryGate,
   evaluateSt1R433SetupGate
 } from './engines/st1-r433-entry-gate.js';
+import { appendSt1RejectionShadow } from './research/st1-rejection-shadow-ledger.js';
+import St1R438ShadowPortfolio from './research/st1-r438-shadow-portfolio.js';
 
 const STRATEGY_CANDLE_INTERVAL_MS = config.STRATEGY_CANDLE_INTERVAL_MS;
 const BTC_SYMBOL = config.BTC_SYMBOL;
@@ -145,6 +148,14 @@ export class TradingLoop {
       breadth15m: null,
       breadth24h: null
     };
+    this.r438ShadowPortfolio = new St1R438ShadowPortfolio({
+      storageFile: config.ST1_R438_SHADOW_STATE_FILE,
+      notionalUsdt: config.ST1_R438_SHADOW_NOTIONAL_USDT,
+      stopPercent: config.ST1_R438_SHADOW_STOP_PERCENT,
+      lockPercent: config.ST1_R438_SHADOW_LOCK_PERCENT,
+      maximumHoldMinutes: config.ST1_R438_SHADOW_MAX_HOLD_MINUTES,
+      commissionPercent: Number(config.PAPER_COMMISSION_PERCENT || 0.08)
+    });
     this.activePositions = new Map();
     this.tradeStats = {
       total: 0,
@@ -374,7 +385,12 @@ export class TradingLoop {
   }
 
   resolveAccountingStatePath() {
-    return path.resolve(process.cwd(), String(config.ACCOUNTING_STATE_FILE || 'data/accounting-state.json'));
+    const configured = String(config.ACCOUNTING_STATE_FILE || 'data/accounting-state.json');
+    const mode = String(process.env.APP_MODE || config.APP_MODE || 'paper').toLowerCase();
+    const filename = mode === 'live' && configured === 'data/accounting-state.json'
+      ? 'data/accounting-state-live.json'
+      : configured;
+    return path.resolve(process.cwd(), filename);
   }
 
   restoreAccountingState() {
@@ -592,8 +608,52 @@ export class TradingLoop {
       longRsiMinimum: config.ST1_R433_LONG_RSI_MINIMUM,
       longRsiMaximumExclusive: config.ST1_R433_LONG_RSI_MAXIMUM_EXCLUSIVE,
       longFlowMinimum: config.ST1_R433_LONG_FLOW_MINIMUM,
-      longFlowMaximum: config.ST1_R433_LONG_FLOW_MAXIMUM
+      longFlowMaximum: config.ST1_R433_LONG_FLOW_MAXIMUM,
+      additiveShadowEnabled: config.ST1_R438_SHADOW_ENABLED,
+      additiveRsiMinimum: config.ST1_R438_LONG_RSI_MINIMUM,
+      additiveRsiMaximumExclusive: config.ST1_R438_LONG_RSI_MAXIMUM_EXCLUSIVE,
+      additiveFlowMinimum: config.ST1_R438_LONG_FLOW_MINIMUM,
+      additiveFlowMaximum: config.ST1_R438_LONG_FLOW_MAXIMUM
     };
+  }
+
+  recordSt1RejectionShadow(coin, ambush, reason, details = {}, setupOverride = null) {
+    try {
+      const setup = setupOverride || ambush?.st1Setup || {};
+      const rsi = Number(setup.rsi);
+      const laneCandidate = rsi >= Number(config.ST1_R438_LONG_RSI_MINIMUM)
+        && rsi < Number(config.ST1_R438_LONG_RSI_MAXIMUM_EXCLUSIVE)
+        ? 'R438_SHADOW'
+        : null;
+      return appendSt1RejectionShadow({
+        coin,
+        signal: ambush?.expectedSignal || setup.signal,
+        reason,
+        setupSignature: setup.setupSignature,
+        setupCloseTime: setup.setupCloseTime,
+        crossingCloseTime: details.crossingCloseTime,
+        sourceInterval: config.ST1_RENKO_SOURCE_INTERVAL,
+        rsi: setup.rsi,
+        takerBuyRatio: details.takerBuyRatio,
+        targetPrice: details.targetPrice ?? setup.targetPrice,
+        observedPrice: details.latestClose ?? details.currentPrice,
+        boxSize: setup.boxSize,
+        brickHigh: setup.brick?.high,
+        brickLow: setup.brick?.low,
+        appVersion: config.APP_VERSION,
+        laneCandidate
+      }, {
+        enabled: config.ST1_REJECTION_SHADOW_ENABLED,
+        storageFile: config.ST1_REJECTION_SHADOW_FILE
+      });
+    } catch (error) {
+      logger.warn('ST1 rejection shadow persistence failed; trading remains unaffected', {
+        coin,
+        reason,
+        error: error.message
+      });
+      return { recorded: false, reason: 'PERSISTENCE_ERROR' };
+    }
   }
 
   invalidateSimpleRenkoSetup(coin, ambush, reason, details = {}) {
@@ -601,6 +661,7 @@ export class TradingLoop {
     if (signature) this.st1RenkoInvalidatedSetupSignatures.set(coin, signature);
     this.ambushList.delete(coin);
     this.markEntryFunnelRejection(ambush?.expectedSignal, coin, reason);
+    this.recordSt1RejectionShadow(coin, ambush, reason, details);
     logger.info('ST1 Renko order-flow setup invalidated', {
       coin,
       signal: ambush?.expectedSignal || null,
@@ -696,6 +757,68 @@ export class TradingLoop {
     }
   }
 
+  async updateR438ShadowPositions(now = Date.now()) {
+    if (!config.ST1_R438_SHADOW_ENABLED) return;
+    for (const position of this.r438ShadowPortfolio.getOpen()) {
+      try {
+        const currentPrice = Number(await this.orderService.getCurrentPrice(position.symbol));
+        let atrValue = null;
+        try {
+          const candles = this.historicalCandleCache
+            ? await this.historicalCandleCache.getOrFetchCandles(position.symbol, '1m', 20)
+            : await this.marketData.getKlines(position.symbol, '1m', 20);
+          atrValue = this.calculateAtrValue(candles, 14);
+        } catch {
+          atrValue = null;
+        }
+        const result = this.r438ShadowPortfolio.update(position.symbol, currentPrice, { now, atrValue });
+        if (result.closed) {
+          logger.info('ST1 R43.8 SHADOW position closed', result.result);
+          await NotificationService.sendMessage(
+            `🧪 <b>ST1 R43.8 SHADOW KAPANDI</b>\n` +
+            `Coin: <code>${result.result.symbol}</code>\n` +
+            `Sonuç: <code>${result.result.netPnlUsdt >= 0 ? '+' : ''}${result.result.netPnlUsdt.toFixed(4)} USDT</code>\n` +
+            `Neden: <code>${result.result.exitReason}</code>\n` +
+            `ℹ️ Binance emri gönderilmedi.`
+          );
+        }
+      } catch (error) {
+        logger.warn('ST1 R43.8 SHADOW update failed; CORE trading remains unaffected', {
+          coin: position.symbol,
+          error: error.message
+        });
+      }
+    }
+  }
+
+  async openR438ShadowPosition({ coin, currentPrice, setup, flow, entryGate, now = Date.now() }) {
+    const result = this.r438ShadowPortfolio.open({
+      symbol: coin,
+      entryPrice: currentPrice,
+      enteredAt: now,
+      features: {
+        lane: entryGate.lane,
+        policy: entryGate.policy,
+        rsi: setup.rsi,
+        takerBuyRatio: flow.takerBuyRatio,
+        targetPrice: setup.targetPrice,
+        setupCloseTime: setup.setupCloseTime,
+        setupSignature: setup.setupSignature
+      }
+    });
+    if (!result.opened) return result;
+    logger.info('ST1 R43.8 SHADOW position opened; Binance route bypassed', result.position);
+    await NotificationService.sendMessage(
+      `🧪 <b>ST1 R43.8 SHADOW AÇILDI</b>\n` +
+      `Coin: <code>${coin}</code>\n` +
+      `Sanal Giriş: <code>${Number(currentPrice).toFixed(8)}</code>\n` +
+      `RSI: <code>${Number(setup.rsi).toFixed(2)}</code> | Taker: <code>${Number(flow.takerBuyRatio).toFixed(4)}</code>\n` +
+      `Sanal Notional: <code>${Number(config.ST1_R438_SHADOW_NOTIONAL_USDT).toFixed(2)} USDT</code>\n` +
+      `🔒 Yetki: <code>SHADOW_ONLY — Binance emri yok</code>`
+    );
+    return result;
+  }
+
   async refreshSimpleRenkoUniverse(now = Date.now()) {
     const refreshIntervalMs = this.resolveAmbushRefreshIntervalMs();
     if (this.lastAmbushRefreshAt !== null && now - this.lastAmbushRefreshAt < refreshIntervalMs) {
@@ -770,6 +893,7 @@ export class TradingLoop {
 
   async runSimpleRenkoEntryCycle(notificationSummary, now, maxPositions) {
     await this.refreshScientificShadowTrend(now);
+    await this.updateR438ShadowPositions(now);
     const options = this.getSimpleRenkoOptions();
     const orderFlowOptions = this.getSimpleRenkoOrderFlowOptions();
     const r433GateOptions = this.getSt1R433EntryGateOptions();
@@ -844,6 +968,7 @@ export class TradingLoop {
       if (!setupGate.allowed) {
         countRejection(setupGate.reason);
         this.markEntryFunnelRejection(setup.signal, coin, setupGate.reason);
+        this.recordSt1RejectionShadow(coin, ambush, setupGate.reason, {}, setup);
         if (ambush) this.ambushList.delete(coin);
         continue;
       }
@@ -876,6 +1001,7 @@ export class TradingLoop {
           scanReason: 'ST1_SIMPLE_RENKO_SIGNAL',
           scanOnly: false,
           st1Setup: setup,
+          st1EntryLane: setupGate.lane || 'R433_CORE',
           st1LastFilterReason: null,
           st1FlowState: {
             resetSideSeen: false,
@@ -904,7 +1030,9 @@ export class TradingLoop {
           orderFlowRequiredConfirmations: orderFlowOptions.requiredConfirmations,
           longMinimumBuyRatio: orderFlowOptions.longMinimumBuyRatio,
           longMaximumBuyRatio: r433GateOptions.longFlowMaximum,
-          entryPolicy: ST1_R433_ENTRY_POLICY,
+          entryPolicy: setupGate.lane === 'R438_SHADOW'
+            ? ST1_R438_ADDITIVE_POLICY
+            : ST1_R433_ENTRY_POLICY,
           shortMaximumBuyRatio: orderFlowOptions.shortMaximumBuyRatio,
           maxChaseT: orderFlowOptions.maxChaseT
         });
@@ -1055,7 +1183,7 @@ export class TradingLoop {
       this.markEntryFunnelStage(setup.signal, 'bodyBreak', coin);
       const confirmation = {
         confirmed: true,
-        reason: 'ST1_R433_LONG_RSI_FLOW_REPLAY_CONFIRMED',
+        reason: entryGate.reason,
         features: {
           st1SimpleRenko: true,
           sourceInterval: options.sourceInterval,
@@ -1076,9 +1204,23 @@ export class TradingLoop {
           normalizedDelta: flow.normalizedDelta,
           maxChaseT: orderFlowOptions.maxChaseT,
           entryPolicy: entryGate.policy,
+          entryLane: entryGate.lane || 'R433_CORE',
           replayConfirmed: true
         }
       };
+
+      if (entryGate.executionAuthority === 'SHADOW_ONLY') {
+        const shadowEntry = await this.openR438ShadowPosition({
+          coin, currentPrice, setup, flow, entryGate, now
+        });
+        if (shadowEntry.opened) {
+          this.markEntryFunnelStage(setup.signal, 'opened', coin);
+          this.st1RenkoLastExecutedSetupCloseTimes.set(coin, setup.setupCloseTime);
+        }
+        this.st1RenkoInvalidatedSetupSignatures.delete(coin);
+        this.ambushList.delete(coin);
+        continue;
+      }
 
       const entry = await this.enterPosition(
         coin,
@@ -1510,7 +1652,7 @@ export class TradingLoop {
       'Trading Loop Active (24/7)\n' +
       `Mode: ${modeLabel}\n` +
       (config.ST1_SIMPLE_RENKO_ENTRY_ENABLED
-        ? 'Strategy: R43.3 LONG-only | 15m Renko RSI 28-30 | taker 0.58-0.72 | BB + 0.25T'
+        ? 'Strategy: R43.8 | CORE LIVE yetkili RSI 28-30 | EK SHADOW sanal RSI 26-27 | taker 0.58-0.72'
         : `Strategy scan: 15m candle closes + ${this.resolveStrategyCandleCloseDelayMs() / 1000}s`)
     );
 
@@ -3064,6 +3206,11 @@ export class TradingLoop {
     if (!this.running) {
       return;
     }
+
+    // SHADOW positions are observed by the fast monitor, not only by the 15m
+    // strategy cycle. This improves path fidelity while remaining fail-open
+    // and completely separate from exchange position management.
+    await this.updateR438ShadowPositions(Date.now());
 
     if (!this.orderService.isLiveTradingEnabled()) {
       await this.monitorManagedPositions();

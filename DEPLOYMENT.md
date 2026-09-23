@@ -8,7 +8,7 @@
 - Docker and Docker Compose when using containers
 - Binance public market-data access
 
-R43 is PAPER-only. `APP_MODE=live`, `ENABLE_REAL_TRADING=true`, TESTNET and LIVE scripts are rejected by the code-level safety lock.
+R43.8 defaults to PAPER. Explicit `APP_MODE=live` plus `ENABLE_REAL_TRADING=true` and a successful preflight authorize only the R43.3 CORE exchange route; the RSI 26–27 SHADOW lane never sends an order.
 
 ## 2. Install
 

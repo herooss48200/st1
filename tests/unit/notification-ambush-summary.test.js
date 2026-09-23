@@ -149,7 +149,7 @@ describe('NotificationService ambush summary formatting', () => {
     expect(message).toContain('15m mum verisi alınamadı: <code>1</code>');
   });
 
-  test('R43.3 funnel shows replay gate, disabled SHORT and rescue radar as disabled', async () => {
+  test('R43.8 funnel shows CORE/additive gate, disabled SHORT and rescue radar as disabled', async () => {
     const sendSpy = jest.spyOn(notificationService, 'sendMessage').mockResolvedValue(true);
     const previousTelegramEnabled = notificationService.config.ENABLE_TELEGRAM;
     notificationService.config.ENABLE_TELEGRAM = true;
@@ -169,11 +169,11 @@ describe('NotificationService ambush summary formatting', () => {
     }
 
     const message = sendSpy.mock.calls[0][0];
-    expect(message).toContain('ST1 R43.3 LONG EDGE GİRİŞ HUNİSİ');
+    expect(message).toContain('ST1 R43.8 CORE + EK SHADOW GİRİŞ HUNİSİ');
     expect(message).toContain('1m Kesişim <code>4</code>');
     expect(message).toContain('Flow-1 <code>3</code>');
     expect(message).toContain('Flow-2 <code>2</code>');
-    expect(message).toContain('R43.3 <code>1</code>');
+    expect(message).toContain('CORE/EK <code>1</code>');
     expect(message).toContain('SHORT: Replay kararıyla yeni girişler <code>KAPALI</code>');
     expect(message).toContain('KURTARMA RADARI — KAPALI');
     expect(message).not.toContain('Coin EMA/ST');

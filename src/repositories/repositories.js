@@ -4,7 +4,9 @@ import path from 'path';
 
 class TradeRepository {
   constructor() {
-    this.storagePath = path.join(process.cwd(), 'data', 'trade-snapshots.json');
+    const mode = String(process.env.APP_MODE || 'paper').toLowerCase();
+    const filename = mode === 'live' ? 'trade-snapshots-live.json' : 'trade-snapshots.json';
+    this.storagePath = path.join(process.cwd(), 'data', filename);
     this.trades = this.loadTradesFromDisk();
   }
 
